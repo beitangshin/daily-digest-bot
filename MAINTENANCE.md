@@ -185,6 +185,20 @@ src/daily_digest/
   具体（比如强调"仅限自动驾驶技术/法规/事故，不含常规新车/续航资讯"），(b) 换成更垂直的
   信息源。这不是 bug，是"频道有多准"完全取决于 `domain_desc` 和信息源选择这件事的直接体现。
 
+## 部署方式
+
+两条部署路径都保留着，别互相干扰：
+
+- **Windows 计划任务**（本机跑）：`run_daily_digest.bat` + `schtasks /create ...`（README 里
+  有具体命令），只在电脑开机且到点时触发，不会自动唤醒睡眠中的电脑。
+- **树莓派常驻**（推荐，24x7 不依赖某台电脑开机）：[deploy/pi/install.sh](deploy/pi/install.sh)
+  一键装好两个 systemd 单元——`daily-digest.timer`（每天 08:00 跑一次）和
+  `daily-digest-web.service`（常驻 `python -m http.server` 把 `output/` 暴露到局域网，
+  默认端口 8080，配 `Restart=on-failure` 崩了自动拉起来）。网页服务本质就是把已经生成好的
+  静态 html 文件（`digest.html` / `index.html`）直接当静态资源伺服，没有额外的后端代码，
+  所以`render_html.py` 输出的 html 必须保持"自包含、可以直接当静态文件打开"这个约束
+  （不能引入需要服务端渲染或者相对于某个特定 web root 的路径假设）。
+
 ## 怎么测试
 
 ```bash

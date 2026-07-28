@@ -83,6 +83,28 @@ schtasks /create /tn "DailyDigestBot" /tr "cmd /c cd /d D:\projects\daily-digest
 0 8 * * * cd /path/to/daily-digest-bot && /usr/bin/env python -m daily_digest.cli run >> output/run.log 2>&1
 ```
 
+## 部署到树莓派（常驻 + 局域网访问）
+
+如果想让它 7x24 常驻运行、不依赖某台电脑开机，比较合适的做法是放树莓派上跑，
+再把 `output/` 目录用一个简单的 HTTP server 暴露到局域网，用手机/电脑直接访问
+`http://<树莓派IP>:8080` 看。[deploy/pi/install.sh](deploy/pi/install.sh) 把这套流程脚本化了：
+
+```bash
+git clone https://github.com/beitangshin/daily-digest-bot.git
+cd daily-digest-bot
+cp .env.example .env   # 编辑 .env 填入 DEEPSEEK_API_KEY（这一步脚本会提醒你但不会帮你填）
+bash deploy/pi/install.sh          # 默认用 8080 端口，想换端口: bash deploy/pi/install.sh 8888
+```
+
+脚本做的事：建虚拟环境装依赖 → 写两个 systemd 单元并启用——
+`daily-digest.timer`（每天 08:00 跑一次 `daily-digest run`，树莓派 24 小时开着不存在"睡眠错过"
+的问题）和 `daily-digest-web.service`（常驻跑 `python -m http.server`，把 `output/` 目录
+暴露到局域网，崩溃自动重启）。跑完会打印出访问地址。
+
+排查用：`journalctl -u daily-digest.service -f`（看每日抓取有没有报错）、
+`journalctl -u daily-digest-web.service -f`（看网页服务）、
+`systemctl list-timers daily-digest.timer`（看下次什么时候跑）。
+
 ## 测试
 
 ```bash
