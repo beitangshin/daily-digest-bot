@@ -19,6 +19,10 @@ if [ ! -f "$REPO_DIR/pyproject.toml" ]; then
   exit 1
 fi
 
+echo "==> 安装系统依赖（python3-venv，以及万一 lxml 在这台设备上没有现成 wheel、需要本地编译时用到的头文件）"
+sudo apt-get update
+sudo apt-get install -y python3-venv python3-dev build-essential libxml2-dev libxslt1-dev zlib1g-dev
+
 echo "==> 创建虚拟环境并安装依赖"
 python3 -m venv "$REPO_DIR/.venv"
 "$REPO_DIR/.venv/bin/pip" install -e "$REPO_DIR"
