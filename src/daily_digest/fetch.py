@@ -1,9 +1,10 @@
 """Fetching layer: RSS/Atom feeds (preferred) with a best-effort HTML fallback.
 
-Only articles published "today" (configured timezone) survive this stage for
-RSS sources, since feed entries carry a reliable timestamp. Plain HTML
-sources don't, so their candidate links are date-filtered later, once
-`extract.py` has pulled each article's own page (see `orchestrator.py`).
+Only articles published at/after `cutoff` (a rolling "since last run"
+boundary -- see state.py, not a calendar-day one) survive this stage for RSS
+sources, since feed entries carry a reliable timestamp. Plain HTML sources
+don't, so their candidate links are date-filtered later, once `extract.py`
+has pulled each article's own page (see `orchestrator.py`).
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from dateutil import parser as dateutil_parser
 
 from .config import Settings
 from .models import Article, Source
-from .timeutil import is_today
+from .timeutil import is_since
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ def discover_feed_url(homepage_url: str, client: httpx.Client) -> str | None:
 
 
 def fetch_rss_articles(
-    source: Source, feed_url: str, tz: ZoneInfo, settings: Settings
+    source: Source, feed_url: str, tz: ZoneInfo, cutoff: datetime, settings: Settings
 ) -> list[Article]:
     parsed = feedparser.parse(feed_url)
     if parsed.bozo and not parsed.entries:
@@ -99,7 +100,7 @@ def fetch_rss_articles(
     articles = []
     for entry in parsed.entries:
         published = _entry_published_at(entry, tz)
-        if not is_today(published, tz, settings.include_undated_as_today):
+        if not is_since(published, cutoff, settings.include_undated_articles):
             continue
         link = entry.get("link")
         if not link:
@@ -159,17 +160,17 @@ def fetch_html_fallback_articles(
     return articles
 
 
-def fetch_source(source: Source, settings: Settings, tz: ZoneInfo) -> list[Article]:
+def fetch_source(source: Source, settings: Settings, tz: ZoneInfo, cutoff: datetime) -> list[Article]:
     with _new_client(settings) as client:
         try:
             if source.type == "rss":
-                return fetch_rss_articles(source, source.url, tz, settings)
+                return fetch_rss_articles(source, source.url, tz, cutoff, settings)
 
             # type == "html": try to discover a real feed first (far more
             # reliable than scraping links), fall back to link-scraping.
             feed_url = discover_feed_url(source.url, client)
             if feed_url:
-                found = fetch_rss_articles(source, feed_url, tz, settings)
+                found = fetch_rss_articles(source, feed_url, tz, cutoff, settings)
                 if found:
                     return found
             return fetch_html_fallback_articles(source, client, settings)
@@ -178,14 +179,14 @@ def fetch_source(source: Source, settings: Settings, tz: ZoneInfo) -> list[Artic
             return []
 
 
-def fetch_all(sources: list[Source], settings: Settings) -> list[Article]:
-    """Fetch today's candidate articles from every enabled source, concurrently."""
-    tz = ZoneInfo(settings.timezone)
+def fetch_all(sources: list[Source], settings: Settings, tz: ZoneInfo, cutoff: datetime) -> list[Article]:
+    """Fetch candidate articles published at/after `cutoff` from every enabled
+    source, concurrently."""
     enabled = [s for s in sources if s.enabled]
 
     results: list[Article] = []
     with ThreadPoolExecutor(max_workers=settings.max_concurrent_fetches) as pool:
-        futures = {pool.submit(fetch_source, s, settings, tz): s for s in enabled}
+        futures = {pool.submit(fetch_source, s, settings, tz, cutoff): s for s in enabled}
         for future in as_completed(futures):
             source = futures[future]
             items = future.result()

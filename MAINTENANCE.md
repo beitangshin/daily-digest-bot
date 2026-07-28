@@ -74,14 +74,36 @@ DeepSeek 官方文档（见下方参考链接）建议：JSON mode 需要 (a) pr
 `Channel.domain_desc`（见下面第 6 节），不是写死的——这也是为什么新增频道不需要改
 `llm.py` 代码，只需要在 `config/channels.yaml` 里描述清楚这个频道是什么领域。
 
-### 5. 「今天」是怎么判断的
+### 5. 怎么判断"要收哪些文章"——滚动窗口，不是日历日
 
-见 `timeutil.is_today()`。时区由 `.env` 里 `DIGEST_TIMEZONE`（默认 `Asia/Shanghai`）决定。
-RSS 来源在抓取阶段就用 feed 自带的发布时间过滤；没有 RSS、靠爬首页链接兜底的来源
-（`type: html` 且没发现 feed 的情况）在列表页拿不到发布时间，会先原样带着 `published_at
-= None` 往下走，等 `extract.py` 抓到文章正文页后用 `trafilatura` 解析出的 metadata 日期
-再补上，之后统一在 `orchestrator.py` 里再过滤一次。没有任何日期信息的文章默认**不算今天**
-（除非 `.env` 里把 `INCLUDE_UNDATED_AS_TODAY` 设成 true）——宁可漏掉也不要混进过期内容。
+最初的实现是按日历日过滤（"published_at 是不是今天"），后来发现一个漏洞：定时任务比如
+每天 8:00 跑一次，只认"今天发布"的文章；那么 8:00 之后到午夜之间发布的内容，等第二天
+再跑时发布日期已经变成"昨天"，会被过滤掉——永远不会出现在任何一天的简报里。
+
+现在改成"自上次成功运行以来"的滚动窗口（`orchestrator._determine_cutoff` +
+`state.py` + `timeutil.is_since()`）：
+
+- 每个频道在 `output/<channel.key>/.state.json` 里记一个时间戳
+  `last_run_started_at`——注意存的是**上次运行开始的时间**，不是结束时间或者最新一篇
+  文章的发布时间，这样即使某篇文章恰好在抓取过程中发布，下次运行也不会因为窗口起点晚于
+  它的发布时间而漏掉。
+- 本次运行的 cutoff = 上次的 `last_run_started_at`；如果完全没有历史记录（第一次跑），
+  往回看 `FIRST_RUN_LOOKBACK_HOURS`（默认 24 小时）。
+- 如果上次运行离现在太久（比如设备关机了好几天），cutoff 会被限制在
+  `MAX_LOOKBACK_HOURS`（默认 72 小时）以内，不会因为补一次积压就把好几天的内容全塞进
+  一份简报里，同时会打一条 warning 日志提醒你补了多久。
+- RSS 来源在抓取阶段就用 feed 自带的发布时间跟 cutoff 比较；没有 RSS、靠爬首页链接
+  兜底的来源（`type: html` 且没发现 feed 的情况）在列表页拿不到发布时间，会先原样带着
+  `published_at = None` 往下走，等 `extract.py` 抓到文章正文页后用 `trafilatura` 解析出
+  的 metadata 日期再补上，之后统一在 `orchestrator.py` 里再比较一次。没有任何日期信息的
+  文章默认**不收录**（除非 `.env` 里把 `INCLUDE_UNDATED_ARTICLES` 设成 true）——宁可漏掉
+  也不要混进过期内容。
+- **只有真正跑完（非 `--dry-run`）才会推进 `last_run_started_at`。** `--dry-run` /
+  `sources check` 只是拿当前 cutoff 预览一下会抓到什么，不会移动这个时间戳，所以可以
+  反复跑来调试而不影响下次正式运行的窗口。
+- 时区（`.env` 里 `DIGEST_TIMEZONE`，默认 `Asia/Shanghai`）现在主要用于展示（文件夹按
+  哪天的日期命名）和给没有时区信息的日期字符串兜底假定时区，不再直接参与"算不算今天"
+  这件事——cutoff 比较用的是两个带时区的 datetime 直接比大小，跟日历日无关。
 
 ### 6. 多频道架构：为什么是 `Channel` 而不是写死 AI 行业
 
@@ -117,13 +139,17 @@ src/daily_digest/
   models.py           Channel / Source / Article / ArticleSummary / DigestItem / DigestSection / Digest
   sourcesio.py         某个频道 sources yaml 文件的读写、增删（CLI `sources add/remove/list` 背后调的就是它，
                         本身不关心频道概念，只是对着一个 Path 操作）
-  timeutil.py           「是不是今天」的时区处理
+  timeutil.py           is_since(dt, cutoff, include_undated) —— 判断一篇文章是否落在
+                        滚动窗口内，纯函数，不读状态
+  state.py               每个频道的 last_run_started_at 状态：
+                        output/<channel.key>/.state.json 的读写
   fetch.py               RSS 解析（feedparser）+ feed 自动发现 + 无 RSS 时的 HTML 兜底爬取，全部并发
   extract.py              用 trafilatura 抓正文全文 + 补发布日期
   llm.py                  DeepSeek 客户端 + map/reduce 摘要管道；两个 system prompt 是
                           `_map_system_prompt(channel)` / `_reduce_system_prompt(channel)`（见上）
-  orchestrator.py          对单个 channel 串起 fetch -> extract -> 过滤今天 -> summarize ->
-                          render -> 写到 output/<channel.key>/ -> 刷新 output/index.html
+  orchestrator.py          对单个 channel 串起 fetch -> extract -> 按滚动窗口过滤(见第5节) ->
+                          summarize -> render -> 写到 output/<channel.key>/ -> 推进
+                          state.py 里的时间戳 -> 刷新 output/index.html
   render_markdown.py        Digest -> markdown 字符串（标题里用 digest.channel_name）
   render_html.py             Digest -> 本地网页 html（Jinja2 模板在 templates/）+
                           render_combined_index() 生成跨频道的 tab 首页

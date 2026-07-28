@@ -26,8 +26,10 @@ class Settings:
     max_concurrent_fetches: int
     max_concurrent_llm_calls: int
     articles_per_batch: int
-    include_undated_as_today: bool
+    include_undated_articles: bool
     max_html_fallback_links: int
+    first_run_lookback_hours: float
+    max_lookback_hours: float
 
     @property
     def has_api_key(self) -> bool:
@@ -62,6 +64,8 @@ def load_settings(env_file: Path | None = None) -> Settings:
         max_concurrent_fetches=_int("MAX_CONCURRENT_FETCHES", 8),
         max_concurrent_llm_calls=_int("MAX_CONCURRENT_LLM_CALLS", 3),
         articles_per_batch=_int("ARTICLES_PER_LLM_BATCH", 6),
-        include_undated_as_today=_bool("INCLUDE_UNDATED_AS_TODAY", False),
+        include_undated_articles=_bool("INCLUDE_UNDATED_ARTICLES", False),
         max_html_fallback_links=_int("MAX_HTML_FALLBACK_LINKS", 20),
+        first_run_lookback_hours=float(os.getenv("FIRST_RUN_LOOKBACK_HOURS", "24")),
+        max_lookback_hours=float(os.getenv("MAX_LOOKBACK_HOURS", "72")),
     )

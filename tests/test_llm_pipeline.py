@@ -21,8 +21,10 @@ def _settings(**overrides) -> Settings:
         max_concurrent_fetches=2,
         max_concurrent_llm_calls=2,
         articles_per_batch=6,
-        include_undated_as_today=False,
+        include_undated_articles=False,
         max_html_fallback_links=10,
+        first_run_lookback_hours=24.0,
+        max_lookback_hours=72.0,
     )
     base.update(overrides)
     return Settings(**base)

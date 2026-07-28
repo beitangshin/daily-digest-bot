@@ -1,4 +1,4 @@
-"""Top-level pipeline: fetch -> extract -> filter to today -> summarize -> render -> write.
+"""Top-level pipeline: fetch -> extract -> filter since last run -> summarize -> render -> write.
 
 Runs one channel per call (see channels.py) -- callers (cli.py) loop over
 channels when the user wants "all of them" run in one command.
@@ -6,7 +6,7 @@ channels when the user wants "all of them" run in one command.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -19,9 +19,32 @@ from .models import Article, Channel, Digest, Source
 from .render_html import render_combined_index, render_digest_html, write_day_meta
 from .render_markdown import render_markdown
 from .sourcesio import load_sources
-from .timeutil import is_today
+from .state import load_last_run_started_at, save_last_run_started_at
+from .timeutil import is_since
 
 logger = logging.getLogger(__name__)
+
+
+def _determine_cutoff(channel: Channel, output_dir: Path, now: datetime, settings: Settings) -> datetime:
+    """Rolling "since last successful run" boundary instead of a calendar-day
+    one -- see state.py and MAINTENANCE.md for why calendar-day filtering has
+    a gap. Falls back to a fixed lookback window on the very first run, and
+    caps how far back we'll ever reach (so a Pi that was off for a week
+    doesn't dump a week of backlog into one digest).
+    """
+    last_run = load_last_run_started_at(channel.key, output_dir)
+    max_lookback = now - timedelta(hours=settings.max_lookback_hours)
+    if last_run is None:
+        return now - timedelta(hours=settings.first_run_lookback_hours)
+    if last_run < max_lookback:
+        logger.warning(
+            "[%s] last run was %s ago, further back than MAX_LOOKBACK_HOURS=%s; capping the window",
+            channel.key,
+            now - last_run,
+            settings.max_lookback_hours,
+        )
+        return max_lookback
+    return last_run
 
 
 def run_daily(
@@ -32,31 +55,36 @@ def run_daily(
     dry_run: bool = False,
     chat_fn: ChatFn | None = None,
 ) -> Digest:
-    """Run one full pass for a single channel: fetch today's articles from
-    every enabled source in that channel's sources file, summarize them with
-    DeepSeek, and write digest.md + digest.html under output/<channel.key>/.
+    """Run one full pass for a single channel: fetch everything published
+    since this channel's last successful run from every enabled source in
+    its sources file, summarize with DeepSeek, and write digest.md +
+    digest.html under output/<channel.key>/.
 
     With `dry_run=True`, fetching/filtering still happens (so newly added
-    sources can be sanity-checked) but no DeepSeek calls are made and nothing
-    is written to disk.
+    sources can be sanity-checked) but no DeepSeek calls are made, nothing is
+    written to disk, and the "last run" timestamp is not advanced.
     """
     sources_file = sources_file or sources_file_for(channel)
     tz = ZoneInfo(settings.timezone)
-    date_str = datetime.now(tz).date().isoformat()
+    run_started_at = datetime.now(tz)
+    date_str = run_started_at.date().isoformat()
+    cutoff = _determine_cutoff(channel, output_dir, run_started_at, settings)
 
     sources = load_sources(sources_file)
     if not sources:
         raise SystemExit(f"频道 {channel.key!r} 没有配置任何信息源，请先编辑 {sources_file}")
 
-    logger.info("[%s] fetching from %d source(s)...", channel.key, len(sources))
-    candidates = fetch_all(sources, settings)
+    logger.info(
+        "[%s] fetching from %d source(s), since %s...", channel.key, len(sources), cutoff.isoformat()
+    )
+    candidates = fetch_all(sources, settings, tz, cutoff)
     logger.info("[%s] %d candidate article(s) fetched, extracting full text...", channel.key, len(candidates))
 
     enriched = enrich_all(candidates, settings, tz)
     articles = [
-        a for a in enriched if is_today(a.published_at, tz, settings.include_undated_as_today)
+        a for a in enriched if is_since(a.published_at, cutoff, settings.include_undated_articles)
     ]
-    logger.info("[%s] %d article(s) confirmed as today's after extraction", channel.key, len(articles))
+    logger.info("[%s] %d article(s) confirmed since last run after extraction", channel.key, len(articles))
 
     if dry_run:
         _print_dry_run_report(channel, sources, articles)
@@ -79,6 +107,7 @@ def run_daily(
             channel_name=channel.name,
         )
         _write_outputs(digest, channel, output_dir)
+        save_last_run_started_at(channel.key, output_dir, run_started_at)
         return digest
 
     summaries = summarize_articles(articles, channel, settings, chat_fn=chat_fn)
@@ -89,6 +118,7 @@ def run_daily(
     digest = build_digest(on_topic, channel, date_str, settings, chat_fn=chat_fn)
 
     _write_outputs(digest, channel, output_dir)
+    save_last_run_started_at(channel.key, output_dir, run_started_at)
     return digest
 
 
@@ -96,7 +126,7 @@ def _print_dry_run_report(channel: Channel, sources: list[Source], articles: lis
     counts: dict[str, int] = {}
     for a in articles:
         counts[a.source_name] = counts.get(a.source_name, 0) + 1
-    print(f"[dry-run:{channel.key}] 未调用 DeepSeek，仅展示抓取结果（共 {len(articles)} 篇今日文章）：")
+    print(f"[dry-run:{channel.key}] 未调用 DeepSeek，仅展示抓取结果（共 {len(articles)} 篇，自上次运行以来）：")
     for s in sources:
         flag = "" if s.enabled else "（已禁用）"
         print(f"  - {s.name}{flag}: {counts.get(s.name, 0)} 篇")
