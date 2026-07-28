@@ -1,0 +1,72 @@
+# 「AI 行业日报」频道的信息源列表（频道定义见 config/channels.yaml）。
+#
+# 你可以直接编辑这个文件，也可以用命令行添加/删除（记得带上 --channel ai）：
+#   daily-digest sources add --channel ai --name "某网站" --url "https://example.com/feed" --type rss --category "分类名"
+#   daily-digest sources remove --channel ai --name "某网站"
+#   daily-digest sources list --channel ai
+#   daily-digest sources check --channel ai   # 只测试抓取，不调用 DeepSeek，不消耗 token
+#
+# 字段说明：
+#   name     展示名称，必须唯一
+#   type     "rss"（推荐，直接给 RSS/Atom feed 地址）或 "html"（没有 feed 时给主页地址，
+#            程序会先尝试自动发现该站点的 feed，找不到再退化为抓取首页链接，效果不如 rss 稳定）
+#   url      对应 type 的地址
+#   category 摘要分组用的分类标签，可自定义
+#   enabled  设为 false 可以临时禁用某个信息源而不用删除它
+#
+# 下面预置了一些英文/中文的知名 AI 资讯信息源作为起点，请按需增删 —— 具体 feed 地址可能会随时间
+# 失效，建议先跑一次 `daily-digest sources check --channel ai` 确认能正常抓到今天的文章。
+
+sources:
+  - name: "TechCrunch AI"
+    type: rss
+    url: "https://techcrunch.com/category/artificial-intelligence/feed/"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "The Verge AI"
+    type: rss
+    url: "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "VentureBeat"
+    type: rss
+    # /category/ai/feed/ 曾经存在，但实测已停更两个多月；改用全站 feed（VentureBeat 现在
+    # 大部分内容本来就是 AI 相关，非 AI 内容会被摘要阶段的"无关"过滤器挡掉）。
+    url: "https://venturebeat.com/feed/"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "MIT Technology Review"
+    type: rss
+    url: "https://www.technologyreview.com/feed/"
+    category: "权威研究媒体"
+    enabled: true
+
+  - name: "OpenAI Blog"
+    type: rss
+    url: "https://openai.com/news/rss.xml"
+    category: "厂商官方博客"
+    enabled: true
+
+  - name: "Google DeepMind Blog"
+    type: rss
+    url: "https://deepmind.google/blog/rss.xml"
+    category: "厂商官方博客"
+    enabled: true
+
+  # 机器之心是纯前端渲染的 SPA，官网没有可用的 RSS，公开 RSSHub 实例对它的路由也会 403。
+  # 暂时保留 html 兜底抓取，但实测抓不到今日文章（列表页拿不到发布时间，正文也因为是 JS
+  # 渲染而无法静态解析）。如果你有自建 RSSHub 或找到别的可靠源，把这条换成 type: rss。
+  - name: "机器之心"
+    type: html
+    url: "https://www.jiqizhixin.com/"
+    category: "中文科技媒体"
+    enabled: true
+
+  - name: "量子位"
+    type: rss
+    url: "https://www.qbitai.com/rss"
+    category: "中文科技媒体"
+    enabled: true

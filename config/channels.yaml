@@ -1,0 +1,40 @@
+# 频道列表：每个频道是一份独立的每日简报（各自的信息源、各自的分类体系、各自的输出目录）。
+#
+# 加一个新频道只需要三步：
+#   1. 在这里加一条 channel（key 必须是文件名安全的英文标识符，其余字段随意）
+#   2. 建一个 config/sources/<key>.yaml（格式和其他频道一样，可以参考 config/sources/ai.yaml）
+#   3. daily-digest sources check --channel <key> 测试一下信息源
+# 不需要改任何代码。
+#
+# 字段说明：
+#   key          频道标识，决定 config/sources/<key>.yaml 和 output/<key>/ 的路径，不要用中文/空格
+#   name         展示名称，会出现在网页标题、Markdown 标题、首页 tab 上
+#   domain_desc  一句话描述这个频道的领域，会被拼进 DeepSeek 的 prompt（比如判断"这篇文章跟本频道
+#                无关"时用得上），写清楚点效果更好
+#   topics       这个频道的分类标签列表，摘要阶段会按这些标签给文章打标；不用加"其他"和"无关"，
+#                这两个所有频道都会自动带上
+
+channels:
+  - key: ai
+    name: "AI 行业日报"
+    domain_desc: "人工智能（AI）行业"
+    topics:
+      - 模型发布
+      - 融资并购
+      - 政策监管
+      - 产品应用
+      - 研究论文
+      - 人事变动
+      - 算力芯片
+
+  - key: autonomous_driving
+    name: "自动驾驶日报"
+    domain_desc: "自动驾驶/智能驾驶（智能网联汽车）行业"
+    topics:
+      - 法规政策
+      - 车企与新车动态
+      - 技术突破
+      - 事故与安全
+      - 芯片与传感器
+      - 商业化与落地运营
+      - 融资并购

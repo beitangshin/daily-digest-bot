@@ -1,0 +1,39 @@
+# 自动驾驶频道的信息源。字段说明见 config/sources/ai.yaml 顶部注释，格式完全一样。
+#
+# 下面 4 个是逐个用 feedparser 实测过、当天确实有更新的 RSS（不是随手抄的地址）：
+
+sources:
+  - name: "TechCrunch Transportation"
+    type: rss
+    url: "https://techcrunch.com/category/transportation/feed/"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "Electrek"
+    type: rss
+    url: "https://electrek.co/feed/"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "InsideEVs"
+    type: rss
+    url: "https://insideevs.com/rss/articles/all/"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "The Verge Cars"
+    type: rss
+    url: "https://www.theverge.com/rss/cars/index.xml"
+    category: "海外科技媒体"
+    enabled: true
+
+# 没找到验证可用的中文自动驾驶垂直媒体 RSS：试过 36氪/车东西/懂车帝/第一电动/盖世汽车 的常见
+# feed 路径，要么 404，要么重定向到非 XML 页面。如果你找到能用的（比如盖世汽车官网找到真实
+# 订阅入口，或者自建 RSSHub 跑一个车讯路由），按下面格式加一条，加完记得
+# `daily-digest sources check --channel autonomous_driving` 验证一下：
+#
+# - name: "示例中文源"
+#   type: rss
+#   url: "https://example.com/feed"
+#   category: "中文科技媒体"
+#   enabled: true

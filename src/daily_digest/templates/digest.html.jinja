@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>{{ digest.channel_name }} · {{ digest.date_str }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #6b7280; --border: #e5e7eb;
+    --accent: #2563eb; --card: #f8fafc; --highlight: #fef9c3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111417; --fg: #e6e6e6; --muted: #9aa4af; --border: #2a2f36; --accent: #6ea8fe; --card: #1a1e23; --highlight: #3a3313; }
+  }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex; min-height: 100vh;
+  }
+  nav#toc {
+    width: 280px; flex-shrink: 0; border-right: 1px solid var(--border);
+    padding: 20px 16px; overflow-y: auto; max-height: 100vh; position: sticky; top: 0;
+  }
+  nav#toc h2 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 12px; }
+  nav#toc .toc-section { margin-bottom: 16px; }
+  nav#toc .toc-section-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; color: var(--fg); }
+  nav#toc a { display: block; font-size: 13px; color: var(--muted); text-decoration: none; padding: 3px 0; line-height: 1.4; }
+  nav#toc a:hover { color: var(--accent); }
+  main { flex: 1; padding: 32px 40px; max-width: 780px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .exec-summary { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 32px; }
+  .exec-summary h2 { font-size: 15px; margin: 0 0 10px; }
+  .exec-summary ul { margin: 0; padding-left: 20px; }
+  .exec-summary li { margin-bottom: 6px; }
+  section.digest-section { margin-bottom: 36px; }
+  section.digest-section > h2 { font-size: 19px; border-bottom: 2px solid var(--accent); padding-bottom: 6px; }
+  article.digest-item { padding: 16px 0; border-bottom: 1px solid var(--border); scroll-margin-top: 20px; }
+  article.digest-item h3 { font-size: 16px; margin: 0 0 8px; }
+  article.digest-item p.synthesis { margin: 0 0 10px; line-height: 1.7; }
+  .source-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .source-pill {
+    font-size: 12px; border: 1px solid var(--border); border-radius: 999px;
+    padding: 4px 10px; text-decoration: none; color: var(--fg); background: var(--card);
+  }
+  .source-pill:hover { border-color: var(--accent); color: var(--accent); }
+  .key-points { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+  details.source-detail { margin-top: 6px; }
+  details.source-detail summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+  footer { color: var(--muted); font-size: 12px; margin-top: 40px; }
+  .empty { color: var(--muted); font-style: italic; }
+  @media (max-width: 860px) {
+    body { flex-direction: column; }
+    nav#toc { width: auto; max-height: none; position: static; border-right: none; border-bottom: 1px solid var(--border); }
+    main { padding: 24px; }
+  }
+</style>
+</head>
+<body>
+<nav id="toc">
+  <h2>目录</h2>
+  {% for section in digest.sections %}
+  {% set section_index = loop.index0 %}
+  <div class="toc-section">
+    <div class="toc-section-title">{{ section.title_zh }}</div>
+    {% for item in section.items %}
+    <a href="#item-{{ section_index }}-{{ loop.index0 }}">{{ item.headline_zh }}</a>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <div class="toc-section">
+    <a href="../../index.html">&larr; 返回首页</a>
+  </div>
+</nav>
+<main>
+  <h1>{{ digest.channel_name }}</h1>
+  <div class="meta">{{ digest.date_str }} · 共扫描 {{ digest.source_count }} 个信息源，收录 {{ digest.article_count }} 篇今日文章</div>
+
+  {% if digest.executive_summary_zh %}
+  <div class="exec-summary">
+    <h2>今日要点</h2>
+    <ul>
+      {% for point in digest.executive_summary_zh %}
+      <li>{{ point }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if not digest.sections %}
+  <p class="empty">今天没有抓取到符合条件的资讯，请检查 config/sources.yaml 中的信息源是否可用。</p>
+  {% endif %}
+
+  {% for section in digest.sections %}
+  {% set section_index = loop.index0 %}
+  <section class="digest-section">
+    <h2>{{ section.title_zh }}</h2>
+    {% for item in section.items %}
+    <article class="digest-item" id="item-{{ section_index }}-{{ loop.index0 }}">
+      <h3>{{ item.headline_zh }}</h3>
+      <p class="synthesis">{{ item.synthesis_zh }}</p>
+      <div class="source-list">
+        {% for s in item.sources %}
+        <a class="source-pill" href="{{ s.article.url }}" target="_blank" rel="noopener noreferrer">
+          {{ s.article.source_name }}{% if s.article.published_at %} · {{ s.article.published_at.strftime("%H:%M") }}{% endif %} ↗
+        </a>
+        {% endfor %}
+      </div>
+      {% for s in item.sources %}
+        {% if s.key_points_zh %}
+        <details class="source-detail">
+          <summary>{{ s.article.source_name }} 要点</summary>
+          <ul class="key-points">
+            {% for p in s.key_points_zh %}
+            <li>{{ p }}</li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endif %}
+      {% endfor %}
+    </article>
+    {% endfor %}
+  </section>
+  {% endfor %}
+
+  <footer>由 daily-digest-bot 自动生成 · DeepSeek 模型摘要，内容可能有误，请以原文链接为准。</footer>
+</main>
+</body>
+</html>

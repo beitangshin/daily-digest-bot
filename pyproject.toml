@@ -4,11 +4,31 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "daily-digest-bot"
-version = "0.1.0"
+version = "0.2.0"
+description = "Daily AI-industry news digest bot: scans configured sources for today's articles and summarizes them with DeepSeek."
 requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.40",
+    "httpx>=0.27",
+    "feedparser>=6.0",
+    "trafilatura>=1.12",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "python-dotenv>=1.0",
+    "PyYAML>=6.0",
+    "python-dateutil>=2.9",
+    "Jinja2>=3.1",
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
 
 [project.scripts]
 daily-digest = "daily_digest.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+daily_digest = ["templates/*.jinja"]

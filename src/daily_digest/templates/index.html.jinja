@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>每日简报 · 频道首页</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #6b7280; --border: #e5e7eb; --accent: #2563eb; --card: #f8fafc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111417; --fg: #e6e6e6; --muted: #9aa4af; --border: #2a2f36; --accent: #6ea8fe; --card: #1a1e23; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 48px 24px; }
+  h1 { font-size: 24px; margin: 0 0 24px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; flex-wrap: wrap; }
+  .tab-btn {
+    appearance: none; background: none; border: none; cursor: pointer;
+    padding: 10px 18px; font-size: 15px; color: var(--muted); border-bottom: 2px solid transparent;
+    font-family: inherit;
+  }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .tab-btn:hover { color: var(--accent); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { border-bottom: 1px solid var(--border); }
+  a.day-link {
+    display: flex; justify-content: space-between; padding: 14px 4px;
+    text-decoration: none; color: var(--fg);
+  }
+  a.day-link:hover { color: var(--accent); }
+  .day-meta { color: var(--muted); font-size: 13px; }
+  .empty { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<main>
+  <h1>每日简报</h1>
+  {% if not channels %}
+  <p class="empty">还没有配置任何频道，请先编辑 config/channels.yaml。</p>
+  {% else %}
+  <div class="tabs" role="tablist">
+    {% for ch in channels %}
+    <button type="button" class="tab-btn{% if loop.first %} active{% endif %}" data-tab="{{ ch.key }}" onclick="showTab('{{ ch.key }}')">{{ ch.name }}</button>
+    {% endfor %}
+  </div>
+  {% for ch in channels %}
+  <div class="tab-panel{% if loop.first %} active{% endif %}" id="panel-{{ ch.key }}">
+    {% if not ch.days %}
+    <p class="empty">还没有生成过「{{ ch.name }}」。运行 <code>daily-digest run --channel {{ ch.key }}</code> 来生成第一份。</p>
+    {% else %}
+    <ul>
+      {% for day in ch.days %}
+      <li>
+        <a class="day-link" href="{{ ch.key }}/{{ day.date_str }}/digest.html">
+          <span>{{ day.date_str }}</span>
+          <span class="day-meta">{{ day.article_count }} 篇 · {{ day.source_count }} 个来源</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</main>
+<script>
+function showTab(key) {
+  document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === key); });
+  document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.toggle('active', p.id === 'panel-' + key); });
+}
+</script>
+</body>
+</html>

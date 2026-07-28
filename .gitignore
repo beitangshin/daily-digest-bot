@@ -1,3 +1,11 @@
 __pycache__/
 *.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# secrets
+.env
+
+# generated output
+output/
 digest.md
