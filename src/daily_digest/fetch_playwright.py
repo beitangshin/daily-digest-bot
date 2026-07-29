@@ -91,6 +91,7 @@ _ITEM_TYPES = {
 
 def _build_search_url(
     *,
+    q: str | None = None,
     location: str | None = None,
     location_ids: list[str] | None = None,
     item_types: list[str] | None = None,
@@ -111,17 +112,22 @@ def _build_search_url(
 
     params: dict[str, str | list[str]] = {}
 
-    # Resolve location → location_ids
-    ids = location_ids or []
-    if location:
-        key = location.lower().replace(" ", "_")
-        resolved = LOCATION_IDS.get(key)
-        if resolved:
-            ids.extend(resolved)
-        else:
-            logger.warning("unknown location %r, leaving location unset", location)
-    if ids:
-        params["location_ids"] = ids  # urlencode handles list → repeated key
+    # Text search (preferred over location_ids which may be outdated)
+    if q:
+        params["q"] = q
+
+    # Resolve location → location_ids (fallback when q is not set)
+    if not q:
+        ids = location_ids or []
+        if location:
+            key = location.lower().replace(" ", "_")
+            resolved = LOCATION_IDS.get(key)
+            if resolved:
+                ids.extend(resolved)
+            else:
+                logger.warning("unknown location %r, leaving location unset", location)
+        if ids:
+            params["location_ids"] = ids
 
     if item_types:
         normalized = []
@@ -422,50 +428,54 @@ class HemnetScraper:
                 monthly_fee: int | None = None
 
                 lines = [line.strip() for line in text.split("\n") if line.strip()]
-                for line in lines:
-                    # Price: "3 595 000 kr" (cap at 100M SEK to filter junk)
-                    if "kr" in line and not line.startswith("Betald") and "Mäklar" not in line and "mån" not in line and "kr/m²" not in line:
-                        parsed = _parse_price(line)
-                        if parsed and 10000 < parsed < 100_000_000:
-                            price = parsed
-                    # Rooms: "2 rum", "3,5 rum"
-                    rooms_match = re.search(r"(\d+[.,]?\d*)\s*(?:rum|rok)", line, re.IGNORECASE)
-                    if rooms_match and rooms is None:
-                        rooms = _parse_float(rooms_match.group(1))
-                    # Area: "123 m²"
-                    area_match = re.search(r"(\d+)\s*m²", line)
-                    if area_match and living_area is None:
-                        living_area = _parse_float(area_match.group(1))
-                    # Monthly fee: "3 500 kr/mån"
-                    fee_match = re.search(r"(\d[\d\s]*)\s*kr/mån", line)
-                    if fee_match and monthly_fee is None:
-                        monthly_fee = _parse_int(fee_match.group(1))
-                    # Title heuristics: first long-ish non-metadata line that looks
-                    # like a property description (not a person name, date, etc.)
-                    skip_kw = ["kr", "rum", "m²", "Mäklar", "Betald", "mån",
-                               "visning", "Idag", "Imorgon"]
-                    if not title and len(line) > 5 and not any(kw in line for kw in skip_kw):
-                        # Skip weekday date-lines and single-word broker names
+                # ── 卡片结构 ──
+                # [Rubrik]                    ← title
+                # [Mäklarnamn]
+                # [Gatuadress]
+                # [Stadsdel / Ort]            ← city (line before price)
+                # [Pris X XXX XXX kr]         ← find this → city = line before it
+                # [X rum]
+                # [Mäklartipset]
+                _city = ""
+                for idx, line in enumerate(lines):
+                    # Price line
+                    parsed_price = _parse_price(line)
+                    if parsed_price and 10000 < parsed_price < 100_000_000:
+                        price = parsed_price
+                        # City = line before price
+                        if idx >= 1:
+                            before = lines[idx - 1]
+                            if not any(kw in before.lower() for kw in ["betald", "mäklar", "rum", "m²", "vån", "kr"]):
+                                _city = before
+                            # Address = 2 lines before price
+                            if idx >= 2:
+                                addr_before = lines[idx - 2]
+                                if not any(kw in addr_before.lower() for kw in ["betald", "mäklar", "rum", "m²", "vån"]):
+                                    address = addr_before
+                        continue
+                    # Rooms
+                    rm = re.search(r"(\d+[.,]?\d*)\s*(?:rum|rok)", line, re.IGNORECASE)
+                    if rm and rooms is None:
+                        rooms = _parse_float(rm.group(1))
+                    # Area
+                    am = re.search(r"(\d+)\s*m²", line)
+                    if am and living_area is None:
+                        va = _parse_float(am.group(1))
+                        if va and va >= 8:
+                            living_area = va
+                    # Monthly fee
+                    fm = re.search(r"(\d[\d\s]*)\s*kr/mån", line)
+                    if fm and monthly_fee is None:
+                        monthly_fee = _parse_int(fm.group(1))
+                    # Title: first long-ish non-boilerplate line
+                    if not title and len(line) > 5 and not any(kw in line.lower() for kw in
+                            ["betald", "mäklar", "kr", "rum", "m²", "visning"]):
                         if not re.match(r"^(Mån|Tis|Ons|Tor|Fre|Lör|Sön)\s+\d", line):
                             title = line
-                    # Address: first line with a comma and at least one space after
-                    if title and not address and len(line) > 8 and "," in line:
-                        # Remove leading comma if present
-                        addr = line.lstrip(", ")
-                        if addr:
-                            address = addr
 
-                # Sanity: living_area < 10 m² is almost certainly noise (e.g. "80 m²"
-                # matched as "8 m²" from "188 m²" or "3 m²" from a date like "2023")
+                # Sanity: living_area < 10 m² is almost certainly noise
                 if living_area is not None and living_area < 10:
                     living_area = None
-
-                # Extract city from address (usually "Street, City" or "Area, Municipality")
-                _city = ""
-                if address and "," in address:
-                    _city = address.rsplit(",", 1)[-1].strip()
-                elif title and "," in title:
-                    _city = title.rsplit(",", 1)[-1].strip()
 
                 listing = HemnetListing(
                     title=title or address or "Hemnet listing",

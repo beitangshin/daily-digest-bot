@@ -65,10 +65,9 @@ SEARCH_CONFIG = {
     "sort": "pubdate_desc",
 
     # === Hemnet 搜索（可选，跟 Booli 用同一套条件） ===
+    # 注意：Hemnet 的 location_id 映射可能过时，不传 location 让它搜全瑞典，
+    # 靠下面的地域过滤来筛 Stockholms län 的房源。
     "hemnet_enabled": True,
-    # Hemnet 地区名（传给 _build_search_url 的 location 参数）
-    # 可选值: stockholm, gothenburg, malmo, uppsala ... 或 None（全瑞典）
-    "hemnet_location": "stockholm",
 
     # === 地域过滤（硬过滤阶段会按此筛选） ===
     # 只保留这些城市/区域的房源（关键词匹配，不区分大小写）
@@ -467,12 +466,12 @@ async def run_pipeline(
     except Exception as exc:
         logger.warning("  Booli 抓取失败: %s", exc)
 
-    # --- Hemnet（跟 Booli 用同一套搜索条件） ---
+    # --- Hemnet（用 q=Stockholm 文本搜索，location_ids 已过时不可靠） ---
     if cfg.get("hemnet_enabled", True):
         try:
             from .fetch_playwright import HemnetScraper, _build_search_url as hemnet_url
             hemnet_search_url = hemnet_url(
-                location=cfg.get("hemnet_location"),
+                q=cfg.get("q") or "Stockholm",
                 item_types=cfg["item_types"],
                 max_price=cfg["max_price"],
                 min_price=cfg.get("min_price"),
