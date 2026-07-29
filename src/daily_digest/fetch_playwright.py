@@ -50,6 +50,7 @@ class HemnetListing:
     published_at: datetime | None = None
     listing_type: str = ""  # "villa", "bostadsrätt", "fritidshus", etc.
     image_url: str | None = None
+    city: str = ""
     source: str = "hemnet"
 
 
@@ -377,6 +378,13 @@ class HemnetScraper:
                 if living_area is not None and living_area < 10:
                     living_area = None
 
+                # Extract city from address (usually "Street, City" or "Area, Municipality")
+                _city = ""
+                if address and "," in address:
+                    _city = address.rsplit(",", 1)[-1].strip()
+                elif title and "," in title:
+                    _city = title.rsplit(",", 1)[-1].strip()
+
                 listing = HemnetListing(
                     title=title or address or "Hemnet listing",
                     address=address if address and address.strip(", ") else (title or ""),
@@ -388,6 +396,7 @@ class HemnetScraper:
                     price_per_sqm=int(price / living_area) if price and living_area and living_area > 0 else None,
                     listing_type=listing_type,
                     image_url=image_url,
+                    city=_city,
                 )
                 results.append(listing)
             except Exception:

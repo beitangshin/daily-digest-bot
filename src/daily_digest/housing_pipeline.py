@@ -180,8 +180,7 @@ def _filter_by_floor(listing) -> bool:
 def _filter_by_city(listing) -> bool:
     """地理过滤：只保留 Stockholms län 内的房源。
 
-    默认拒绝（只接受 allowed_cities 列表中的城市），除非城市字段
-    明显匹配 Stockholm 区域。
+    用正则单词边界 \\b 匹配城市名，避免 "Bro" 误配 "Hällabrottet"。
     """
     cfg = SEARCH_CONFIG
     allowed = cfg.get("allowed_cities", [])
@@ -198,18 +197,18 @@ def _filter_by_city(listing) -> bool:
 
     location_lower = location_text.lower()
 
-    # 黑名单优先：明显不在 Stockholm 的直接拒绝
+    # 黑名单优先：单词边界匹配
     for b in blocked:
-        if b.lower() in location_lower:
+        if re.search(r"\b" + re.escape(b.lower()) + r"\b", location_lower):
             return False
 
-    # 白名单：明确在 Stockholms län 的接受
+    # 白名单：单词边界匹配
     for a in allowed:
-        if a.lower() in location_lower:
+        if re.search(r"\b" + re.escape(a.lower()) + r"\b", location_lower):
             return True
 
     # 额外规则：地址中直接包含 "Stockholm" 的接受
-    if "stockholm" in location_lower:
+    if re.search(r"\bstockholm\b", location_lower):
         return True
 
     # 不明确的：拒绝（宁缺毋滥，不要远端城市的房源冒充）
