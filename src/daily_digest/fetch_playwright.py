@@ -229,7 +229,7 @@ class HemnetScraper:
             ],
         )
         context = await self._browser.new_context(
-            viewport={"width": 1366, "height": 900},
+            viewport={"width": 1920, "height": 1080},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -237,20 +237,73 @@ class HemnetScraper:
             ),
             locale="sv-SE",
             timezone_id="Europe/Stockholm",
+            # 更真实的浏览器指纹
+            screen={"width": 1920, "height": 1080},
+            no_viewport=False,
+            # 允许权限
+            permissions=["geolocation"],
+            # 地理位置模拟 Stockholm
+            geolocation={"latitude": 59.3293, "longitude": 18.0686},
+            # 存储和 cookie
+            storage_state=None,
         )
         self._page = await context.new_page()
         self._page.set_default_timeout(self.timeout_ms)
 
-        # Stealth: override webdriver detection
+        # 强反爬：全方位模拟真实浏览器
         await self._page.add_init_script("""
+            // 1. 隐藏 webdriver
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+            // 2. 语言
             Object.defineProperty(navigator, 'languages', { get: () => ['sv-SE', 'en-US', 'en'] });
+
+            // 3. 插件
             Object.defineProperty(navigator, 'plugins', {
                 get: () => [1, 2, 3, 4, 5].map(() => ({ name: 'Chrome PDF Plugin' })),
             });
-            // Override chrome runtime
-            window.chrome = { runtime: {} };
+
+            // 4. Chrome 对象
+            window.chrome = {
+                runtime: {},
+                loadTimes: function() {},
+                csi: function() {},
+                app: {},
+            };
+
+            // 5. WebGL 指纹
+            const getParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(p) {
+                if (p === 37445) return 'Intel Inc.';  // UNMASKED_VENDOR_WEBGL
+                if (p === 37446) return 'Intel Iris OpenGL Engine';  // UNMASKED_RENDERER_WEBGL
+                return getParameter(p);
+            };
+
+            // 6. 硬件信息
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+
+            // 7. 权限
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (p) => (
+                p.name === 'notifications' ? Promise.resolve({ state: 'denied' }) : originalQuery(p)
+            );
+
+            // 8. 覆盖 connection
+            Object.defineProperty(navigator, 'connection', {
+                get: () => ({
+                    effectiveType: '4g',
+                    rtt: 50,
+                    downlink: 10,
+                    saveData: false,
+                }),
+            });
         """)
+
+        # 额外：设置 cookies 让 Hemnet 以为来过
+        await context.add_cookies([
+            {"name": "cookie_consent", "value": "1", "domain": ".hemnet.se", "path": "/"},
+        ])
         return self
 
     async def __aexit__(self, *args: Any) -> None:
@@ -262,6 +315,35 @@ class HemnetScraper:
     # ------------------------------------------------------------------
     # Cookie / consent handling
     # ------------------------------------------------------------------
+
+    _CLOUDFLARE_KEYWORDS = ["just a moment", "checking your browser", "cf-challenge", "cloudflare"]
+
+    async def _is_cloudflare_blocked(self) -> bool:
+        """Check if the page is blocked by Cloudflare."""
+        title = (await self._page.title()).lower()
+        body = await self._page.evaluate("document.body?.innerText?.substring(0, 500) || ''")
+        body_lower = body.lower()
+        for kw in self._CLOUDFLARE_KEYWORDS:
+            if kw in title or kw in body_lower:
+                return True
+        return False
+
+    async def _retry_on_cloudflare(self, url: str, max_retries: int = 3) -> bool:
+        """Reload the page up to max_retries times if Cloudflare blocks."""
+        for attempt in range(1, max_retries + 1):
+            if await self._is_cloudflare_blocked():
+                logger.warning("  Cloudflare 拦截（尝试 %d/%d），重新加载...", attempt, max_retries)
+                await asyncio.sleep(2 * attempt)  # 递增等待
+                await self._page.goto(url, wait_until="domcontentloaded")
+                try:
+                    await self._page.wait_for_load_state("networkidle", timeout=20_000)
+                except Exception:
+                    pass
+                await self._dismiss_cookies()
+                await asyncio.sleep(1)
+            else:
+                return True  # 通过了
+        return False  # 重试完仍然被挡
 
     async def _dismiss_cookies(self) -> None:
         """Try to dismiss Hemnet's cookie / GDPR consent banner."""
@@ -496,8 +578,12 @@ class HemnetScraper:
             await self._page.wait_for_load_state("networkidle", timeout=20_000)
         except Exception:
             pass
-        # Additional wait for lazy-loaded cards
         await asyncio.sleep(2)
+
+        # 检测 Cloudflare，被挡则自动重试
+        if not await self._retry_on_cloudflare(search_url):
+            logger.warning("Cloudflare 拦截超过最大重试次数，返回空结果")
+            return []
 
         all_listings: list[HemnetListing] = []
         for page_num in range(1, pages_to_scrape + 1):

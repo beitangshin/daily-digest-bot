@@ -171,7 +171,7 @@ class BooliScraper:
             ],
         )
         context = await self._browser.new_context(
-            viewport={"width": 1366, "height": 900},
+            viewport={"width": 1920, "height": 1080},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -179,16 +179,36 @@ class BooliScraper:
             ),
             locale="sv-SE",
             timezone_id="Europe/Stockholm",
+            screen={"width": 1920, "height": 1080},
+            no_viewport=False,
+            permissions=["geolocation"],
+            geolocation={"latitude": 59.3293, "longitude": 18.0686},
         )
         self._page = await context.new_page()
         self._page.set_default_timeout(self.timeout_ms)
 
-        # Stealth: hide automation
+        # Stealth: 全方位指纹伪装
         await self._page.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             Object.defineProperty(navigator, 'languages', { get: () => ['sv-SE', 'en-US', 'en'] });
-            window.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5].map(() => ({ name: 'Chrome PDF Plugin' })),
+            });
+            window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+            const gp = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(p) {
+                if (p === 37445) return 'Intel Inc.';
+                if (p === 37446) return 'Intel Iris OpenGL Engine';
+                return gp(p);
+            };
         """)
+
+        # 预设 Booli cookie 避免弹窗
+        await context.add_cookies([
+            {"name": "cookie_consent", "value": "1", "domain": ".booli.se", "path": "/"},
+        ])
         return self
 
     async def __aexit__(self, *args: Any) -> None:
@@ -196,6 +216,32 @@ class BooliScraper:
             await self._browser.close()
         if self._playwright:
             await self._playwright.stop()
+
+    _CLOUDFLARE_KEYWORDS = ["just a moment", "checking your browser", "cf-challenge", "cloudflare"]
+
+    async def _is_cloudflare_blocked(self) -> bool:
+        title = (await self._page.title()).lower()
+        body = await self._page.evaluate("document.body?.innerText?.substring(0, 500) || ''")
+        for kw in self._CLOUDFLARE_KEYWORDS:
+            if kw in title or kw in body.lower():
+                return True
+        return False
+
+    async def _retry_on_cloudflare(self, url: str, max_retries: int = 3) -> bool:
+        for attempt in range(1, max_retries + 1):
+            if await self._is_cloudflare_blocked():
+                logger.warning("  Cloudflare 拦截（尝试 %d/%d），重新加载...", attempt, max_retries)
+                await asyncio.sleep(2 * attempt)
+                await self._page.goto(url, wait_until="domcontentloaded")
+                try:
+                    await self._page.wait_for_load_state("networkidle", timeout=20_000)
+                except Exception:
+                    pass
+                await self._dismiss_cookies()
+                await asyncio.sleep(1)
+            else:
+                return True
+        return False
 
     async def _dismiss_cookies(self) -> None:
         try:
@@ -426,6 +472,11 @@ class BooliScraper:
         except Exception:
             pass
         await asyncio.sleep(2)
+
+        # 检测 Cloudflare 并重试
+        if not await self._retry_on_cloudflare(search_url):
+            logger.warning("Cloudflare 拦截超过最大重试次数，返回空结果")
+            return []
 
         all_listings: list[BooliListing] = []
         for page_num in range(1, pages + 1):
