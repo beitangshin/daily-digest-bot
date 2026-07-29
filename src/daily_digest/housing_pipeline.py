@@ -64,6 +64,11 @@ SEARCH_CONFIG = {
     # 排序方式：pubdate_desc（最新优先）, price_asc（价格从低到高）, price_desc
     "sort": "pubdate_desc",
 
+    # === Hemnet 搜索（可选，给一个浏览器里复制出来的搜索 URL） ===
+    # 留空则只用 Booli。如果有 Hemnet 账号+搜索条件，填在这里可以双平台覆盖。
+    # "hemnet_search_url": "https://www.hemnet.se/bostader?item_types[]=villa&...",
+    "hemnet_search_url": None,
+
     # === 地域过滤（硬过滤阶段会按此筛选） ===
     # 只保留这些城市/区域的房源（关键词匹配，不区分大小写）
     # 列表包含 Stockholms län 所有 kommun + 主要街区
@@ -433,29 +438,62 @@ async def run_pipeline(
     """
     cfg = {**SEARCH_CONFIG, **(search_config or {})}
 
-    # ---- Step 1: 从 Booli 抓取 ----
+    # ---- Step 1: 从 Booli + Hemnet 抓取 ----
     logger.info("=" * 50)
-    logger.info("Step 1: 从 Booli 抓取房源")
+    logger.info("Step 1: 抓取房源（Booli + Hemnet）")
     logger.info("  搜索条件: q=%s, max_price=%s, min_rooms=%s, types=%s",
                 cfg["q"], cfg["max_price"], cfg["min_rooms"], cfg["item_types"])
     logger.info("=" * 50)
 
-    from .fetch_booli import BooliScraper, _build_search_url
+    all_listings: list = []
 
-    # 注意：不把 min_rooms 传给 Booli URL，因为 Booli 的房间过滤不准确。
-    # 房间数过滤完全由硬过滤器处理。
-    search_url = _build_search_url(
-        q=cfg["q"],
-        item_types=cfg["item_types"],
-        max_price=cfg["max_price"],
-        min_price=cfg.get("min_price"),
-        sort=cfg.get("sort", "pubdate_desc"),
-    )
+    # --- Booli ---
+    try:
+        from .fetch_booli import BooliScraper, _build_search_url as booli_url
+        booli_search_url = booli_url(
+            q=cfg["q"],
+            item_types=cfg["item_types"],
+            max_price=cfg["max_price"],
+            min_price=cfg.get("min_price"),
+            sort=cfg.get("sort", "pubdate_desc"),
+        )
+        async with BooliScraper(headless=headless, max_pages=cfg["pages"]) as scraper:
+            booli_listings = await scraper.search(search_url=booli_search_url)
+        # 统一字段名
+        for l in booli_listings:
+            l.source = "booli"
+        all_listings.extend(booli_listings)
+        logger.info("  Booli: %d 套", len(booli_listings))
+    except Exception as exc:
+        logger.warning("  Booli 抓取失败: %s", exc)
 
-    async with BooliScraper(headless=headless, max_pages=cfg["pages"]) as scraper:
-        all_listings = await scraper.search(search_url=search_url)
+    # --- Hemnet（可选，需在配置里填 hemnet_search_url） ---
+    hemnet_url = cfg.get("hemnet_search_url")
+    if hemnet_url:
+        try:
+            from .fetch_playwright import HemnetScraper
+            async with HemnetScraper(headless=headless, max_pages=cfg["pages"]) as scraper:
+                hemnet_listings = await scraper.search(search_url=hemnet_url)
+            for l in hemnet_listings:
+                l.source = "hemnet"
+            all_listings.extend(hemnet_listings)
+            logger.info("  Hemnet: %d 套", len(hemnet_listings))
+        except Exception as exc:
+            logger.warning("  Hemnet 抓取失败: %s", exc)
+    else:
+        logger.info("  Hemnet: 未配置（跳过）")
 
-    logger.info("抓取到 %d 套房源", len(all_listings))
+    # --- 去重 ---
+    seen_urls: set[str] = set()
+    unique_listings: list = []
+    for l in all_listings:
+        if l.url in seen_urls:
+            continue
+        seen_urls.add(l.url)
+        unique_listings.append(l)
+
+    logger.info("  Booli+Hemnet 共 %d 套（去重后 %d 套）", len(all_listings), len(unique_listings))
+    all_listings = unique_listings
 
     if not all_listings:
         logger.warning("没有抓到任何房源，请检查搜索条件")
