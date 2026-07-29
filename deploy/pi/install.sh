@@ -2,7 +2,8 @@
 # Raspberry Pi 一键部署: daily-digest-bot 三个频道 + 本地网页服务。
 #
 # 安装三个 systemd 单元:
-#   daily-digest.timer       每天 08:00 + 20:00 跑全频道（AI+自动驾驶+房源）
+#   daily-digest.timer       每天 08:00 跑全频道（AI+自动驾驶+房源）
+#                           Persistent=true + 管道自带滚动窗口，不漏信息
 #   daily-digest-web.service 开机自启 HTTP 服务，局域网访问
 #
 # 用法:
@@ -97,16 +98,14 @@ Type=oneshot
 ExecStart=/usr/local/bin/daily-digest-runner
 SERVICEEOF
 
-# daily-digest.timer — 每天 08:00 + 20:00
+# daily-digest.timer — 每天 08:00 跑一次（Persistent=true 保证关机错过时补跑）
 sudo tee /etc/systemd/system/daily-digest.timer > /dev/null <<TIMEREOF
 [Unit]
-Description=Daily Digest Bot — 每日定时运行（08:00 / 20:00）
+Description=Daily Digest Bot — 每日 08:00 运行全频道
 
 [Timer]
 OnCalendar=*-*-* 08:00:00
-OnCalendar=*-*-* 20:00:00
 Persistent=true
-RandomizedDelaySec=300
 
 [Install]
 WantedBy=timers.target
