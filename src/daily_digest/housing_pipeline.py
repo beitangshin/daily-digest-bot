@@ -64,10 +64,11 @@ SEARCH_CONFIG = {
     # 排序方式：pubdate_desc（最新优先）, price_asc（价格从低到高）, price_desc
     "sort": "pubdate_desc",
 
-    # === Hemnet 搜索（可选，给一个浏览器里复制出来的搜索 URL） ===
-    # 留空则只用 Booli。如果有 Hemnet 账号+搜索条件，填在这里可以双平台覆盖。
-    # "hemnet_search_url": "https://www.hemnet.se/bostader?item_types[]=villa&...",
-    "hemnet_search_url": None,
+    # === Hemnet 搜索（可选，跟 Booli 用同一套条件） ===
+    "hemnet_enabled": True,
+    # Hemnet 地区名（传给 _build_search_url 的 location 参数）
+    # 可选值: stockholm, gothenburg, malmo, uppsala ... 或 None（全瑞典）
+    "hemnet_location": "stockholm",
 
     # === 地域过滤（硬过滤阶段会按此筛选） ===
     # 只保留这些城市/区域的房源（关键词匹配，不区分大小写）
@@ -467,13 +468,20 @@ async def run_pipeline(
     except Exception as exc:
         logger.warning("  Booli 抓取失败: %s", exc)
 
-    # --- Hemnet（可选，需在配置里填 hemnet_search_url） ---
-    hemnet_url = cfg.get("hemnet_search_url")
-    if hemnet_url:
+    # --- Hemnet（跟 Booli 用同一套搜索条件） ---
+    if cfg.get("hemnet_enabled", True):
         try:
-            from .fetch_playwright import HemnetScraper
+            from .fetch_playwright import HemnetScraper, _build_search_url as hemnet_url
+            hemnet_search_url = hemnet_url(
+                location=cfg.get("hemnet_location"),
+                item_types=cfg["item_types"],
+                max_price=cfg["max_price"],
+                min_price=cfg.get("min_price"),
+                min_rooms=cfg["min_rooms"],
+                sort="publication_time_desc",
+            )
             async with HemnetScraper(headless=headless, max_pages=cfg["pages"]) as scraper:
-                hemnet_listings = await scraper.search(search_url=hemnet_url)
+                hemnet_listings = await scraper.search(search_url=hemnet_search_url)
             for l in hemnet_listings:
                 l.source = "hemnet"
             all_listings.extend(hemnet_listings)
@@ -481,7 +489,7 @@ async def run_pipeline(
         except Exception as exc:
             logger.warning("  Hemnet 抓取失败: %s", exc)
     else:
-        logger.info("  Hemnet: 未配置（跳过）")
+        logger.info("  Hemnet: 已禁用（跳过）")
 
     # --- 去重 ---
     seen_urls: set[str] = set()

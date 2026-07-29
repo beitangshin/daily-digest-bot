@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Booli 房源 (5 套)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #222; padding: 20px; }
+  h1 { font-size: 1.4rem; margin-bottom: 20px; color: #444; }
+  h1 span { font-weight: 400; color: #888; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+  .card { background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+  .card-img { width: 100%; height: 180px; overflow: hidden; background: #e0e0e0; }
+  .card-img img { width: 100%; height: 100%; object-fit: cover; }
+  .no-img { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 3rem; color: #aaa; }
+  .card-body { padding: 14px; }
+  .card-body h2 { font-size: 1rem; line-height: 1.4; margin-bottom: 2px; }
+  .card-body h2 a { color: #222; text-decoration: none; }
+  .card-body h2 a:hover { color: #db4c3f; }
+  .city-line { font-size: .8rem; color: #888; margin-bottom: 6px; }
+  .price { font-size: 1.15rem; font-weight: 700; color: #db4c3f; margin-bottom: 8px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag { display: inline-block; font-size: .75rem; padding: 2px 8px; border-radius: 4px; background: #f0f0f0; color: #555; }
+  .type-tag { background: #e8f0fe; color: #1967d2; }
+  .fee-tag { background: #fef7e0; color: #b8860b; }
+  .footer { margin-top: 20px; font-size: .8rem; color: #999; text-align: center; }
+</style>
+</head>
+<body>
+<h1>Booli <span>— 5 套房源</span></h1>
+<div class='cards'>
+        <div class='card'>
+            <div class='card-img'><img src='https://bcdn.se/images/cache/54939395_420x0.jpg' alt='' loading='lazy'></div>
+            <div class='card-body'>
+                <h2><a href='https://www.booli.se/annons/6208608' target='_blank'>Fallvindsgatan 1</a></h2>
+                <p class='city-line'><span class='city'>Stockholm</span></p>
+                <p class='price'>4 295 000 kr</p>
+                <div class='meta'><span class='tag'>4.0 rum</span> <span class='tag'>110 m²</span> <span class='tag type-tag'>🏢 BRF</span> <span class='tag fee-tag'>7 847 kr/mån</span></div>
+            </div>
+        </div>
+        <div class='card'>
+            <div class='card-img'><img src='https://bcdn.se/images/cache/54938778_420x0.jpg' alt='' loading='lazy'></div>
+            <div class='card-body'>
+                <h2><a href='https://www.booli.se/annons/6208573' target='_blank'>Ålsta Allé 8</a></h2>
+                <p class='city-line'><span class='city'>Järfälla</span></p>
+                <p class='price'>4 700 000 kr</p>
+                <div class='meta'><span class='tag'>4.0 rum</span> <span class='tag'>90 m²</span> <span class='tag type-tag'>🏢 BRF</span></div>
+            </div>
+        </div>
+        <div class='card'>
+            <div class='card-img'><img src='https://bcdn.se/images/cache/37755542_420x0.jpg' alt='' loading='lazy'></div>
+            <div class='card-body'>
+                <h2><a href='https://www.booli.se/annons/5954910' target='_blank'>Riavägen 25</a></h2>
+                <p class='city-line'><span class='city'>Haninge</span></p>
+                <p class='price'>3 795 000 kr</p>
+                <div class='meta'><span class='tag'>5.0 rum</span> <span class='tag'>117 m²</span> <span class='tag type-tag'>🏘️ Radhus</span> <span class='tag fee-tag'>6 455 kr/mån</span></div>
+            </div>
+        </div>
+        <div class='card'>
+            <div class='card-img'><img src='https://bcdn.se/images/cache/54227612_420x0.jpg' alt='' loading='lazy'></div>
+            <div class='card-body'>
+                <h2><a href='https://www.booli.se/annons/6161014' target='_blank'>Falkbergsvägen 9D</a></h2>
+                <p class='city-line'><span class='city'>Botkyrka</span></p>
+                <p class='price'>5 495 000 kr</p>
+                <div class='meta'><span class='tag'>6.0 rum</span> <span class='tag'>160 m²</span> <span class='tag type-tag'>🏘️ Radhus</span> <span class='tag fee-tag'>4 606 kr/mån</span></div>
+            </div>
+        </div>
+        <div class='card'>
+            <div class='card-img'><img src='https://bcdn.se/images/cache/54937178_420x0.jpg' alt='' loading='lazy'></div>
+            <div class='card-body'>
+                <h2><a href='https://www.booli.se/annons/6208490' target='_blank'>Edinsvägen 3</a></h2>
+                <p class='city-line'><span class='city'>Nacka</span></p>
+                <p class='price'>3 995 000 kr</p>
+                <div class='meta'><span class='tag'>4.0 rum</span> <span class='tag type-tag'>🏢 BRF</span> <span class='tag fee-tag'>7 901 kr/mån</span></div>
+            </div>
+        </div></div>
+<p class='footer'>Booli.se · Playwright · 2026-07-29 22:05</p>
+</body>
+</html>

@@ -1,11 +1,8 @@
 # 「瑞典房源日报」频道的信息源。
 #
-# 双平台搜索：Booli（默认）+ Hemnet（可选）。
-# 编辑 housing_pipeline.py 里的 SEARCH_CONFIG 调整搜索条件。
-#
-# 要开启 Hemnet，在 housing_pipeline.py 的 SEARCH_CONFIG 里填：
-#   "hemnet_search_url": "https://www.hemnet.se/bostader?..."
-# 先在浏览器设好筛选条件，复制地址栏 URL 填进去即可。
+# 双平台自动搜索：Booli + Hemnet，都用同一套搜索条件（在
+# housing_pipeline.py 的 SEARCH_CONFIG 里改）。
+# 不需要任何手动复制 URL 的操作。
 
 sources:
   - name: "Booli - Stockholm"
