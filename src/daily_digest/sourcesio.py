@@ -7,7 +7,11 @@ import yaml
 
 from .models import Source
 
-_VALID_TYPES = {"rss", "html"}
+# rss  — RSS/Atom feed (preferred)
+# html — plain HTTP with feed auto-discovery, fallback to scraping <a> links
+# playwright — headless Chromium for JavaScript-rendered listing sites (Hemnet etc.)
+# booli — Booli JSON API (requires BOOLI_CALLER_ID + BOOLI_API_KEY in .env)
+_VALID_TYPES = {"rss", "html", "playwright", "booli"}
 
 
 def load_sources(path: Path) -> list[Source]:

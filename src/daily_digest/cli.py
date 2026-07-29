@@ -129,7 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_parser.add_argument("--channel", required=True, help="频道 key，见 `daily-digest channels list`")
     add_parser.add_argument("--name", required=True, help="展示名称，需唯一")
     add_parser.add_argument("--url", required=True, help="RSS/Atom feed 地址，或没有 feed 时的主页地址")
-    add_parser.add_argument("--type", choices=["rss", "html"], default="rss")
+    add_parser.add_argument("--type", choices=["rss", "html", "playwright", "booli"], default="rss")
     add_parser.add_argument("--category", default="未分类")
     add_parser.add_argument("--sources-file", type=Path, default=None, help="不填则用该频道的默认文件")
     add_parser.set_defaults(func=_cmd_sources_add)

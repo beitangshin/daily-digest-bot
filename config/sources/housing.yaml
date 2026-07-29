@@ -1,22 +1,16 @@
 # 「瑞典房源日报」频道的信息源。
 #
-# 这里需要你自己去 Hemnet 拿一个跟你的搜索条件绑定的专属 RSS 链接（这个链接是你个人账号下的，
-# 我这边生成不了，得你自己操作）：
+# 所有频道统一由 daily-digest run 管理，不需要单独跑脚本。
+# 这个频道使用 Booli Playwright 爬虫（type: booli），不需要 RSS 也不需要 API key。
 #
-#   1. 登录 https://www.hemnet.se （没有账号就注册一个，免费）
-#   2. 按你要的地区/价格区间/户型/面积等条件搜索房源
-#   3. 在搜索结果页找"Spara sökning"（保存搜索），把它设为"Bevakning"（提醒/关注）
-#   4. 进"Mitt Hemnet"（我的 Hemnet）→ 找到这个保存的搜索 → 应该能看到一个 RSS 图标/链接，
-#      复制那个链接
-#   5. 加到下面（或者用命令行）：
-#      daily-digest sources add --channel housing --name "Hemnet - 我的搜索" --url "<你复制的RSS链接>" --type rss --category "在售房源"
+# 如果以后想加别的搜索（比如不同城市、不同价格区间），再加一条 source 即可。
 #
-# 加完记得跑一下 `daily-digest sources check --channel housing` 确认真的能抓到东西——
-# Hemnet 这个"搜索转RSS"功能过去确实存在，但没有官方文档保证长期稳定，如果链接不work，
-# 检查一下是不是过期了，或者需要重新在 Mitt Hemnet 里生成一次。
-#
-# 如果以后想接 Booli 的官方 API（api.booli.se，需要单独申请 caller ID + API key，返回
-# JSON 不是 RSS），需要在 fetch.py 里加一个新的 source type 分支去解析这个 API 返回格式，
-# 现在还没做。
+# 注意：筛选逻辑（楼层、安全等）在 housing_pipeline.py 中配置，
+# 不是在这里配置。
 
-sources: []
+sources:
+  - name: "Booli - Stockholm"
+    url: "https://www.booli.se/sok/till-salu?typ=villa,bostadsrätt,lägenhet,radhus,parhus&pris_max=9500000&sort=pubdate_desc"
+    type: booli
+    category: "在售房源"
+    enabled: true

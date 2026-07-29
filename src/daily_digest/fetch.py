@@ -1,10 +1,12 @@
-"""Fetching layer: RSS/Atom feeds (preferred) with a best-effort HTML fallback.
+"""Fetching layer: RSS/Atom feeds (preferred) with fallback to HTML scraping
+and Playwright-based JavaScript-rendered page scraping.
 
 Only articles published at/after `cutoff` (a rolling "since last run"
 boundary -- see state.py, not a calendar-day one) survive this stage for RSS
 sources, since feed entries carry a reliable timestamp. Plain HTML sources
-don't, so their candidate links are date-filtered later, once `extract.py`
-has pulled each article's own page (see `orchestrator.py`).
+and Playwright sources don't, so their candidate links are date-filtered
+later, once `extract.py` has pulled each article's own page (see
+`orchestrator.py`).
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ from dateutil import parser as dateutil_parser
 
 from .config import Settings
 from .models import Article, Source
+from typing import Any
 from .timeutil import is_since
 
 logger = logging.getLogger(__name__)
@@ -161,6 +164,11 @@ def fetch_html_fallback_articles(
 
 
 def fetch_source(source: Source, settings: Settings, tz: ZoneInfo, cutoff: datetime) -> list[Article]:
+    if source.type == "playwright":
+        return _fetch_playwright(source, settings, tz)
+    if source.type == "booli":
+        return _fetch_booli(source, settings, tz)
+
     with _new_client(settings) as client:
         try:
             if source.type == "rss":
@@ -177,6 +185,95 @@ def fetch_source(source: Source, settings: Settings, tz: ZoneInfo, cutoff: datet
         except Exception:
             logger.exception("unexpected error fetching source %s", source.name)
             return []
+
+
+def _fetch_playwright(source: Source, settings: Settings, tz: ZoneInfo) -> list[Article]:
+    """Fetch articles using Playwright headless browser.
+
+    The source URL is a Hemnet search results page (or similar JS-rendered
+    listing site).  We launch a headless Chromium, navigate, extract cards,
+    and return them as Article objects.
+    """
+    try:
+        from .fetch_playwright import HemnetScraper
+    except ImportError as exc:
+        logger.error(
+            "playwright source '%s' requested but not installed; "
+            "run: pip install playwright && playwright install chromium",
+            source.name,
+        )
+        raise SystemExit(
+            f"Can't fetch {source.name}: playwright is not installed. "
+            f"Run: pip install playwright && playwright install chromium"
+        ) from exc
+
+    import asyncio
+
+    async def _run() -> list[Article]:
+        async with HemnetScraper(headless=True, max_pages=3) as scraper:
+            listings = await scraper.search(search_url=source.url)
+        articles: list[Article] = []
+        for listing in listings:
+            # Build a descriptive title. Price shown as the "article title"
+            # since Hemnet listings don't have a conventional headline.
+            parts = [listing.title or listing.address]
+            if listing.price:
+                parts.append(f"{listing.price:,} kr".replace(",", " "))
+            if listing.rooms:
+                parts.append(f"{listing.rooms} rum")
+            if listing.living_area:
+                parts.append(f"{listing.living_area:.0f} m²")
+            title = " | ".join(parts)
+
+            articles.append(
+                Article(
+                    source_name=source.name,
+                    source_category=source.category,
+                    title=title,
+                    url=listing.url,
+                    published_at=None,  # Hemnet cards don't expose publish date
+                )
+            )
+        return articles
+
+    return asyncio.run(_run())
+
+
+def _fetch_booli(source: Source, settings: Settings, tz: ZoneInfo) -> list[Article]:
+    """Fetch articles using Booli Playwright scraper (same approach as Hemnet)."""
+    try:
+        from .fetch_booli import BooliScraper
+    except ImportError as exc:
+        logger.error("booli source '%s' requested but module not found", source.name)
+        raise SystemExit(f"Can't fetch {source.name}: fetch_booli.py not found") from exc
+
+    import asyncio
+
+    async def _run() -> list[Article]:
+        async with BooliScraper(headless=True, max_pages=3) as scraper:
+            listings = await scraper.search(search_url=source.url)
+        articles: list[Article] = []
+        for listing in listings:
+            parts = [listing.title or listing.address]
+            if listing.price:
+                parts.append(f"{listing.price:,} kr".replace(",", " "))
+            if listing.rooms:
+                parts.append(f"{listing.rooms} rum")
+            if listing.living_area:
+                parts.append(f"{listing.living_area:.0f} m²")
+            title = " | ".join(parts)
+            articles.append(
+                Article(
+                    source_name=source.name,
+                    source_category=source.category,
+                    title=title,
+                    url=listing.url,
+                    published_at=None,
+                )
+            )
+        return articles
+
+    return asyncio.run(_run())
 
 
 def fetch_all(sources: list[Source], settings: Settings, tz: ZoneInfo, cutoff: datetime) -> list[Article]:

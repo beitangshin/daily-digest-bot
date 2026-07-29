@@ -23,6 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+playwright = ["playwright>=1.40"]
 
 [project.scripts]
 daily-digest = "daily_digest.cli:main"
