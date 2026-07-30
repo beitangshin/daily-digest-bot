@@ -45,8 +45,9 @@ SEARCH_CONFIG = {
     "min_price": 500_000,
     "min_rooms": 4,
     "max_rooms": None,
-    "pages": 10,
-    "sort": "pubdate_desc",
+    "pages": 20,
+    # 排序：不传 = 平台默认（综合排序），不按时间排才能搜到全部房源
+    "sort": None,
 
     # === Hemnet 搜索 ===
     "hemnet_enabled": True,
@@ -374,7 +375,7 @@ async def run_pipeline(*, search_config: dict | None = None, headless: bool = Tr
     try:
         async with BooliScraper(headless=headless, max_pages=cfg["pages"]) as s:
             for l in await s.search(search_url=b_url(q=cfg["q"], item_types=cfg["item_types"],
-                    max_price=cfg["max_price"], min_price=cfg.get("min_price"), sort=cfg.get("sort", "pubdate_desc"))):
+                    max_price=cfg["max_price"], min_price=cfg.get("min_price"), sort=cfg.get("sort"))):
                 l.source = "booli"; all_l.append(l)
         logger.info("  Booli: %d", sum(1 for l in all_l if l.source == "booli"))
     except Exception as e:
@@ -386,7 +387,7 @@ async def run_pipeline(*, search_config: dict | None = None, headless: bool = Tr
             async with HemnetScraper(headless=headless, max_pages=cfg["pages"]) as s:
                 for l in await s.search(search_url=h_url(q=cfg.get("q") or "Stockholm",
                         item_types=cfg["item_types"], max_price=cfg["max_price"],
-                        min_price=cfg.get("min_price"), min_rooms=cfg["min_rooms"], sort="publication_time_desc")):
+                        min_price=cfg.get("min_price"), min_rooms=cfg["min_rooms"], sort=cfg.get("sort"))):
                     l.source = "hemnet"; all_l.append(l)
             logger.info("  Hemnet: %d", sum(1 for l in all_l if l.source == "hemnet"))
         except Exception as e:
