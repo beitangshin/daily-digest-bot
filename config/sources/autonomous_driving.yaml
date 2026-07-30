@@ -1,6 +1,8 @@
-# 「自动驾驶日报」频道的信息源列表。
+# 「自动驾驶日报」信息源 — 目标 20+ 个活跃源
+# 来源分布：北美 ≥12 · 中国 ≥4 · 欧洲/其他 ≥4
 
 sources:
+  # ========== 北美（美国/加拿大）==========
   - name: "TechCrunch Transportation"
     type: rss
     url: "https://techcrunch.com/category/transportation/feed/"
@@ -19,20 +21,88 @@ sources:
     category: "海外科技媒体"
     enabled: true
 
-  - name: "The Verge Cars"
-    type: rss
-    url: "https://www.theverge.com/rss/cars/index.xml"
-    category: "海外科技媒体"
-    enabled: true
-
   - name: "CleanTechnica"
     type: rss
     url: "https://cleantechnica.com/feed/"
     category: "海外科技媒体"
     enabled: true
 
-  - name: "Ars Technica Cars"
+  - name: "Teslarati"
     type: rss
-    url: "https://feeds.arstechnica.com/arstechnica/features/cars"
+    url: "https://www.teslarati.com/feed/"
     category: "海外科技媒体"
+    enabled: true
+
+  - name: "The Drive"
+    type: rss
+    url: "https://www.thedrive.com/rss/"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "Car and Driver"
+    type: rss
+    url: "https://www.caranddriver.com/rss/all/"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "Autonomous Vehicle International"
+    type: rss
+    url: "https://www.autonomousvehicleinternational.com/feed/"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "The Verge Transport"
+    type: rss
+    url: "https://www.theverge.com/rss/transportation/index.xml"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "Wired Cars"
+    type: rss
+    url: "https://www.wired.com/feed/tag/cars/latest/rss"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "Hacker News"
+    type: rss
+    url: "https://hnrss.org/frontpage"
+    category: "综合科技"
+    enabled: true
+
+  # ========== 中国 ==========
+  - name: "盖世汽车"
+    type: html
+    url: "https://auto.gasgoo.com/"
+    category: "中文科技媒体"
+    enabled: true
+
+  - name: "量子位"
+    type: rss
+    url: "https://www.qbitai.com/rss"
+    category: "中文科技媒体"
+    enabled: true
+
+  - name: "36氪"
+    type: rss
+    url: "https://36kr.com/feed"
+    category: "中文科技媒体"
+    enabled: true
+
+  # ========== 欧洲/其他 ==========
+  - name: "EU-Startups Mobility"
+    type: rss
+    url: "https://www.eu-startups.com/feed/"
+    category: "欧洲科技媒体"
+    enabled: true
+
+  - name: "TNW"
+    type: rss
+    url: "https://thenextweb.com/feed/"
+    category: "欧洲科技媒体"
+    enabled: true
+
+  - name: "BBC Auto"
+    type: rss
+    url: "https://feeds.bbci.co.uk/news/technology/rss.xml"
+    category: "欧洲科技媒体"
     enabled: true

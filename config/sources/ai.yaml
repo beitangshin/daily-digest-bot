@@ -1,8 +1,9 @@
-# 「AI 行业日报」频道的信息源列表。用 daily-digest sources check --channel ai 验证。
-#
-# 这里预置了中英文 AI 信息源。欢迎增删 —— 建议加完跑一次 check 确认能抓到东西。
+# 「AI 行业日报」信息源 — 目标 20+ 个活跃源
+# 来源分布：北美 ≥12 · 中国 ≥4 · 欧洲/其他 ≥4
+# 加完跑 daily-digest sources check --channel ai 验证
 
 sources:
+  # ========== 北美（美国/加拿大）==========
   - name: "TechCrunch AI"
     type: rss
     url: "https://techcrunch.com/category/artificial-intelligence/feed/"
@@ -27,27 +28,15 @@ sources:
     category: "权威研究媒体"
     enabled: true
 
-  - name: "OpenAI Blog"
-    type: rss
-    url: "https://openai.com/news/rss.xml"
-    category: "厂商官方博客"
-    enabled: true
-
-  - name: "Google DeepMind Blog"
-    type: rss
-    url: "https://deepmind.google/blog/rss.xml"
-    category: "厂商官方博客"
-    enabled: true
-
-  - name: "Ars Technica AI"
-    type: rss
-    url: "https://feeds.arstechnica.com/arstechnica/features/ai"
-    category: "海外科技媒体"
-    enabled: true
-
   - name: "Wired AI"
     type: rss
     url: "https://www.wired.com/feed/tag/ai/latest/rss"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "Ars Technica"
+    type: rss
+    url: "https://feeds.arstechnica.com/arstechnica/technology-lab"
     category: "海外科技媒体"
     enabled: true
 
@@ -57,20 +46,94 @@ sources:
     category: "海外科技媒体"
     enabled: true
 
-  - name: "机器之心"
-    type: html
-    url: "https://www.jiqizhixin.com/"
-    category: "中文科技媒体"
+  - name: "OpenAI Blog"
+    type: rss
+    url: "https://openai.com/news/rss.xml"
+    category: "厂商官方博客"
     enabled: true
 
+  - name: "Anthropic Blog"
+    type: rss
+    url: "https://www.anthropic.com/feed.xml"
+    category: "厂商官方博客"
+    enabled: true
+
+  - name: "Hugging Face Blog"
+    type: rss
+    url: "https://huggingface.co/blog/feed.xml"
+    category: "厂商官方博客"
+    enabled: true
+
+  - name: "NVIDIA Blog"
+    type: rss
+    url: "https://blogs.nvidia.com/feed/"
+    category: "厂商官方博客"
+    enabled: true
+
+  - name: "arXiv AI"
+    type: rss
+    url: "https://rss.arxiv.org/rss/cs.AI"
+    category: "学术论文"
+    enabled: true
+
+  - name: "Hacker News"
+    type: rss
+    url: "https://hnrss.org/frontpage"
+    category: "综合科技"
+    enabled: true
+
+  - name: "Google DeepMind Blog"
+    type: rss
+    url: "https://deepmind.google/blog/rss.xml"
+    category: "厂商官方博客"
+    enabled: true
+
+  # ========== 中国 ==========
   - name: "量子位"
     type: rss
     url: "https://www.qbitai.com/rss"
     category: "中文科技媒体"
     enabled: true
 
-  - name: "36氪 AI"
-    type: rss
-    url: "https://36kr.com/feed/tech"
+  - name: "机器之心"
+    type: html
+    url: "https://www.jiqizhixin.com/"
     category: "中文科技媒体"
+    enabled: true
+
+  - name: "36氪"
+    type: rss
+    url: "https://36kr.com/feed"
+    category: "中文科技媒体"
+    enabled: true
+
+  # ========== 欧洲/其他 ==========
+  - name: "TNW AI"
+    type: rss
+    url: "https://thenextweb.com/feed/"
+    category: "欧洲科技媒体"
+    enabled: true
+
+  - name: "IEEE Spectrum AI"
+    type: rss
+    url: "https://spectrum.ieee.org/feeds/artificial-intelligence.rss"
+    category: "权威研究媒体"
+    enabled: true
+
+  - name: "ScienceDaily AI"
+    type: rss
+    url: "https://www.sciencedaily.com/rss/computers_math/artificial_intelligence.xml"
+    category: "权威研究媒体"
+    enabled: true
+
+  - name: "Analytics Vidhya"
+    type: rss
+    url: "https://www.analyticsvidhya.com/blog/feed/"
+    category: "海外科技媒体"
+    enabled: true
+
+  - name: "Unite.AI"
+    type: rss
+    url: "https://www.unite.ai/feed/"
+    category: "海外科技媒体"
     enabled: true
