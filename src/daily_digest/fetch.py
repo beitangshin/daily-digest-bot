@@ -35,10 +35,12 @@ _COMMON_FEED_PATHS = ["/feed", "/feed/", "/rss", "/rss.xml", "/atom.xml", "/inde
 
 
 def _new_client(settings: Settings) -> httpx.Client:
+    limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
     return httpx.Client(
         headers={"User-Agent": USER_AGENT},
         timeout=settings.request_timeout,
         follow_redirects=True,
+        limits=limits,
     )
 
 
