@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import logging
+import random
 import re
 import sys
 from dataclasses import asdict, dataclass
@@ -63,29 +64,36 @@ SEARCH_BASE = "https://www.hemnet.se/bostader"
 # Mapping for common location slugs → location_ids used by Hemnet.
 # These can change; verify at https://www.hemnet.se/bostader and inspect the
 # network request when you select an area in the search filter.
+# Hemnet 的 GraphQL locationSearch 查出来的真实 ID（用 Playwright 走一遍搜索框自动补全
+# 拿到的，不是猜的）。之前这里 "stockholm": ["17919"] 其实根本不对应 Stockholm——那是个
+# 无效/别的地区的 ID，导致 location_ids 查出来是空的，才被前人改成 q="Stockholm" 兜底；
+# 但 q= 在 Hemnet 上只是普通全文搜索，完全不做地域限定，会把全瑞典的房源都搜出来。
+# "stockholm" 这里用 Stockholms län（省级，id=17744），覆盖 Solna/Täby/Danderyd/Huddinge
+# 这些近郊——比只用 Stockholms kommun（市级，id=18031）更符合我们 allowed_cities 的范围，
+# 剩下的靠 housing_pipeline.py 里的 allowed_cities/blocked_cities 再精筛一遍。
 LOCATION_IDS: dict[str, list[str]] = {
-    "stockholm": ["17919"],  # Stockholm kommun
-    "gothenburg": ["17920"],  # Göteborgs kommun
-    "malmo": ["17921"],  # Malmö kommun
-    "uppsala": ["17922"],
-    "linkoping": ["17923"],
-    "vasteras": ["17924"],
-    "orebro": ["17925"],
-    "helsingborg": ["17926"],
-    "jonkoping": ["17927"],
-    "norrkoping": ["17928"],
+    "stockholm": ["17744"],  # Stockholms län
     "hela_sverige": [],  # no filter = all of Sweden
 }
 
+# Hemnet 的筛选表单里 item_types 复选框的真实 value（用 Playwright 点开筛选面板读 DOM
+# 拿到的，不是猜的）：villa / radhus / bostadsratt / fritidshus / tomt / gard / other——
+# 注意 bostadsratt、gard 都不带重音符号，传 "bostadsrätt"/"gård" 会被 Hemnet 静默忽略。
+# 复选框标签里公寓（lägenhet）用的就是 bostadsratt 这个 value（label 显示"Lägenheter"），
+# Hemnet 没有独立的 lägenhet 分类。parhus（双拼/联排）没有对应的 checkbox value，实测
+# 结果里也没见到单独归类，这里先兜底映射到 other，不保证精确（需要另外验证）。
 _ITEM_TYPES = {
     "villa": "villa",
-    "bostadsratt": "bostadsrätt",
-    "bostadsrätt": "bostadsrätt",
+    "bostadsratt": "bostadsratt",
+    "bostadsrätt": "bostadsratt",
+    "lagenhet": "bostadsratt",
+    "lägenhet": "bostadsratt",
     "fritidshus": "fritidshus",
     "tomt": "tomt",
-    "gård": "gård",
+    "gård": "gard",
+    "gard": "gard",
     "radhus": "radhus",
-    "parhus": "parhus",
+    "parhus": "other",  # 未在 Hemnet 筛选面板里发现独立 value，暂兜底，需要单独验证
 }
 
 
@@ -112,30 +120,33 @@ def _build_search_url(
 
     params: dict[str, str | list[str]] = {}
 
-    # Text search (preferred over location_ids which may be outdated)
-    if q:
-        params["q"] = q
-
-    # Resolve location → location_ids (fallback when q is not set)
-    if not q:
-        ids = location_ids or []
-        if location:
-            key = location.lower().replace(" ", "_")
-            resolved = LOCATION_IDS.get(key)
-            if resolved:
-                ids.extend(resolved)
-            else:
-                logger.warning("unknown location %r, leaving location unset", location)
-        if ids:
-            params["location_ids"] = ids
+    # 地域限定必须走 location_ids —— q= 在 Hemnet 上只是全文搜索，不做地域限定
+    # （传 q=Stockholm 实际会搜出全瑞典的房源）。q/location 只作为查 LOCATION_IDS 的 key，
+    # 查不到才退回 q= 硬搜（等于不限地域，聊胜于无）。
+    ids = list(location_ids or [])
+    key_source = location or q
+    if key_source:
+        key = key_source.lower().replace(" ", "_")
+        resolved = LOCATION_IDS.get(key)
+        if resolved:
+            ids.extend(resolved)
+        elif not ids:
+            logger.warning("unknown location %r, falling back to free-text q= (not geo-scoped)", key_source)
+            params["q"] = key_source
+    # Hemnet 的搜索表单提交的是 location_ids[]=.../item_types[]=... 这种带方括号的
+    # key（不是普通的重复 key=val1&key=val2）——用 Playwright 走一遍真实筛选器抓包
+    # 确认的，没有方括号后缀这两个过滤器会被 Hemnet 静默忽略，等于没筛。
+    if ids:
+        params["location_ids[]"] = ids
 
     if item_types:
         normalized = []
         for t in item_types:
             t_lower = t.lower()
             norm = _ITEM_TYPES.get(t_lower, t_lower)
-            normalized.append(norm)
-        params["item_types"] = normalized
+            if norm not in normalized:
+                normalized.append(norm)
+        params["item_types[]"] = normalized
 
     if min_price is not None:
         params["price_min"] = str(min_price)
@@ -215,6 +226,7 @@ class HemnetScraper:
         self.max_pages = max_pages
         self.slow_mo = slow_mo
         self._browser = None
+        self._context = None
         self._page = None
 
     async def __aenter__(self) -> HemnetScraper:
@@ -234,7 +246,21 @@ class HemnetScraper:
                 "--disable-blink-features=IdleDetection",
             ],
         )
-        context = await self._browser.new_context(
+        await self._new_page()
+        return self
+
+    async def _new_page(self) -> None:
+        """(Re)create the browser context + page.
+
+        Hemnet 会在同一个 context/session 里的第二次导航（不管是 goto、真实
+        click 还是 dispatch_event 触发的）上返回一个卡死不动的 "Vänta..."
+        验证页——用 Playwright 实测过，goto/click/dispatch_event 三种方式都会
+        被拦，唯独换一个全新的 context（哪怕还在同一个 browser 进程里）就完全
+        正常。所以翻页时不复用 page，而是每页都重新开一个 context。
+        """
+        if self._context:
+            await self._context.close()
+        self._context = await self._browser.new_context(
             viewport={"width": 1920, "height": 1080},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -253,7 +279,7 @@ class HemnetScraper:
             # 存储和 cookie
             storage_state=None,
         )
-        self._page = await context.new_page()
+        self._page = await self._context.new_page()
         self._page.set_default_timeout(self.timeout_ms)
 
         # 强反爬：全方位模拟真实浏览器
@@ -307,12 +333,13 @@ class HemnetScraper:
         """)
 
         # 额外：设置 cookies 让 Hemnet 以为来过
-        await context.add_cookies([
+        await self._context.add_cookies([
             {"name": "cookie_consent", "value": "1", "domain": ".hemnet.se", "path": "/"},
         ])
-        return self
 
     async def __aexit__(self, *args: Any) -> None:
+        if self._context:
+            await self._context.close()
         if self._browser:
             await self._browser.close()
         if self._playwright:
@@ -352,7 +379,12 @@ class HemnetScraper:
         return False  # 重试完仍然被挡
 
     async def _dismiss_cookies(self) -> None:
-        """Try to dismiss Hemnet's cookie / GDPR consent banner."""
+        """Try to dismiss Hemnet's cookie / GDPR consent banner.
+
+        Hemnet 目前用 Usercentrics（<aside id="usercentrics-cmp-ui">），不是这里按钮文案
+        认识的 Didomi/自建横幅，点击会直接超时。所以先试按钮，再用 JS 强制把已知的几种
+        弹窗容器都摘掉——保证无论后端换成哪家 CMP，弹窗都不会一直挡住页面阻止翻页/点击。
+        """
         try:
             btn = self._page.locator(
                 'button:has-text("Godkänn alla"), '
@@ -365,7 +397,19 @@ class HemnetScraper:
                 await asyncio.sleep(0.5)
                 logger.info("dismissed cookie banner")
         except Exception:
-            logger.debug("no cookie banner found or already dismissed")
+            logger.debug("cookie banner button not found/clickable, falling back to force-remove")
+        try:
+            await self._page.evaluate(
+                """() => {
+                    document.querySelectorAll(
+                        '#usercentrics-cmp-ui, [id*="usercentrics"], #didomi-host, ' +
+                        '.didomi-popup-backdrop, #didomi-popup, #onetrust-consent-sdk, ' +
+                        '[id*="CybotCookiebotDialog"]'
+                    ).forEach(e => e.remove());
+                }"""
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Listing extraction
@@ -447,10 +491,15 @@ class HemnetScraper:
                             before = lines[idx - 1]
                             if not any(kw in before.lower() for kw in ["betald", "mäklar", "rum", "m²", "vån", "kr"]):
                                 _city = before
-                            # Address = 2 lines before price
+                            # Address = 2 lines before price. Some cards insert an
+                            # extra "avgift" (monthly fee, e.g. "6 612 kr/mån") line
+                            # between the real address and the price, shifting this
+                            # offset onto the fee line -- exclude "kr" here too (the
+                            # city check above already does) so we don't mistake a
+                            # fee for the street address.
                             if idx >= 2:
                                 addr_before = lines[idx - 2]
-                                if not any(kw in addr_before.lower() for kw in ["betald", "mäklar", "rum", "m²", "vån"]):
+                                if not any(kw in addr_before.lower() for kw in ["betald", "mäklar", "rum", "m²", "vån", "kr"]):
                                     address = addr_before
                         continue
                     # Rooms
@@ -500,33 +549,24 @@ class HemnetScraper:
     # ------------------------------------------------------------------
     # Pagination
     # ------------------------------------------------------------------
+    #
+    # Hemnet 的翻页链接就是当前 URL 加一个 &page=N，本可以直接构造 URL 跳转，
+    # 但同一个 context 里的第二次导航——不管是 goto()、真实 click 还是
+    # dispatch_event('click')，三种都实测过——会被 Hemnet 判定成可疑行为，
+    # 返回一个卡死不动的 "Vänta..." 验证页，永远等不到结果（这也是之前只抓到
+    # 每次搜索恰好第 1 页数量的根本原因：翻页从没真正成功过）。唯独换一个全新
+    # 的 context（即使还在同一个 browser 进程里）就完全正常，所以每翻一页都
+    # 通过 `_new_page()` 重开一个 context 再直接 goto 目标页 URL。
 
-    async def _has_next_page(self) -> bool:
-        """Check if a 'next page' link/button exists."""
-        next_btn = self._page.locator(
-            'a[rel="next"], '
-            'button:has-text("Nästa"), '
-            'a:has-text("Nästa sida"), '
-            '[data-testid="pagination-next"]'
-        )
-        return await next_btn.count() > 0
+    @staticmethod
+    def _with_page_param(url: str, page_num: int) -> str:
+        from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
-    async def _go_next_page(self) -> bool:
-        """Click the 'next page' link and wait for new results to load."""
-        next_btn = self._page.locator(
-            'a[rel="next"], '
-            'button:has-text("Nästa"), '
-            'a:has-text("Nästa sida"), '
-            '[data-testid="pagination-next"]'
-        )
-        if await next_btn.count() == 0:
-            return False
-        try:
-            await next_btn.first.click(timeout=5_000)
-            await self._page.wait_for_load_state("networkidle", timeout=10_000)
-        except Exception:
-            await asyncio.sleep(2)
-        return True
+        parts = urlsplit(url)
+        query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "page"]
+        if page_num > 1:
+            query.append(("page", str(page_num)))
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
     # ------------------------------------------------------------------
     # Public API
@@ -579,42 +619,44 @@ class HemnetScraper:
             )
 
         pages_to_scrape = max_pages or self.max_pages
-        logger.info("navigating to: %s", search_url)
-        await self._page.goto(search_url, wait_until="domcontentloaded")
-        await self._dismiss_cookies()
-
-        # Wait for the result list to render
-        try:
-            await self._page.wait_for_load_state("networkidle", timeout=20_000)
-        except Exception:
-            pass
-        await asyncio.sleep(2)
-
-        # 检测 Cloudflare，被挡则自动重试
-        if not await self._retry_on_cloudflare(search_url):
-            logger.warning("Cloudflare 拦截超过最大重试次数，返回空结果")
-            return []
 
         all_listings: list[HemnetListing] = []
         for page_num in range(1, pages_to_scrape + 1):
+            page_url = self._with_page_param(search_url, page_num)
+            if page_num > 1:
+                # 每页都是全新 context——见上面 Pagination 小节的说明。
+                await self._new_page()
+            logger.info("navigating to: %s", page_url)
+            await self._page.goto(page_url, wait_until="domcontentloaded")
+            await self._dismiss_cookies()
+
+            try:
+                await self._page.wait_for_load_state("networkidle", timeout=20_000)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+            if not await self._retry_on_cloudflare(page_url):
+                logger.warning("Cloudflare 拦截超过最大重试次数，停止翻页")
+                break
+
             logger.info("scraping page %d/%d", page_num, pages_to_scrape)
 
             # Scroll down to trigger lazy loading
             await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(1)
+            await asyncio.sleep(random.uniform(1.0, 2.2))
 
             page_listings = await self._extract_listings_from_page()
             logger.info("  found %d listing(s) on page %d", len(page_listings), page_num)
+            if not page_listings:
+                logger.info("no more listings, stopping pagination")
+                break
             all_listings.extend(page_listings)
 
-            # Try next page
-            if page_num < pages_to_scrape and await self._has_next_page():
-                if not await self._go_next_page():
-                    logger.info("no more pages available")
-                    break
-                await asyncio.sleep(2)
-            else:
-                break
+            # 随机化翻页间隔，避免固定节奏被识别为爬虫；每 10 页额外歇一下
+            await asyncio.sleep(random.uniform(3.0, 6.5))
+            if page_num % 10 == 0:
+                await asyncio.sleep(random.uniform(5.0, 10.0))
 
         # Deduplicate by URL (keep first / newest occurrence)
         seen_urls: set[str] = set()

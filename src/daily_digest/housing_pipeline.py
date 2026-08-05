@@ -45,7 +45,7 @@ SEARCH_CONFIG = {
     "min_price": 500_000,
     "min_rooms": 4,
     "max_rooms": None,
-    "pages": 20,
+    "pages": 50,
     # 排序：不传 = 平台默认（综合排序），不按时间排才能搜到全部房源
     "sort": None,
 
@@ -53,22 +53,14 @@ SEARCH_CONFIG = {
     "hemnet_enabled": True,
 
     # === 地域过滤 ===
+    # 用户明确指定的核心区域名单，不做扩展。
     "allowed_cities": [
         "Stockholm", "Södermalm", "Östermalm", "Norrmalm", "Vasastan",
         "Kungsholmen", "Gamla stan", "Djurgården", "Liljeholmen",
-        "Bromma", "Alvik", "Ekerö", "Drottningholm",
-        "Solna", "Sundbyberg", "Råsunda", "Huvudsta",
-        "Lidingö", "Täby", "Danderyd", "Djursholm",
-        "Sollentuna", "Edsberg", "Helenelund",
-        "Upplands Väsby", "Sigtuna", "Märsta",
-        "Vallentuna", "Österåker", "Åkersberga",
-        "Vaxholm", "Norrtälje", "Värmdö", "Gustavsberg",
-        "Nacka", "Saltsjöbaden", "Fisksätra", "Järla Sjö",
-        "Tyresö", "Haninge", "Vendelsö",
-        "Huddinge", "Flemingsberg", "Segeltorp", "Kungens kurva",
-        "Botkyrka", "Tullinge", "Tumba",
-        "Salem", "Rönninge", "Järfälla", "Jakobsberg", "Barkarby",
-        "Upplands-Bro", "Kungsängen",
+        "Enskede", "Årsta",
+        "Solna", "Sundbyberg",
+        "Täby", "Danderyd",
+        "Huddinge", "Kungens kurva", "Segeltorp",
     ],
     "blocked_cities": [
         "Göteborg", "Malmö", "Uppsala", "Västerås",
@@ -82,6 +74,20 @@ SEARCH_CONFIG = {
         "Uddevalla", "Strömstad",
         "Älvdalen", "Mora", "Kiruna",
         "Södertälje",
+        # 不在核心名单里的近郊/远郊，明确排除
+        "Bromma", "Alvik", "Nacka", "Saltsjöbaden",
+        "Ekerö", "Drottningholm", "Lidingö",
+        "Djursholm",
+        "Sollentuna", "Edsberg", "Helenelund",
+        "Upplands Väsby", "Sigtuna", "Märsta",
+        "Vallentuna", "Österåker", "Åkersberga",
+        "Vaxholm", "Norrtälje", "Värmdö", "Gustavsberg",
+        "Fisksätra", "Järla Sjö",
+        "Tyresö", "Haninge", "Vendelsö",
+        "Flemingsberg",
+        "Botkyrka", "Tullinge", "Tumba",
+        "Salem", "Rönninge", "Järfälla", "Jakobsberg", "Barkarby",
+        "Upplands-Bro", "Kungsängen",
     ],
 }
 
@@ -204,14 +210,21 @@ async def check_area_safety(areas: list[str]) -> dict[str, str]:
 
 SCORING_SYSTEM_PROMPT = """你是一名瑞典房产评估专家。你会收到一套房源信息，请对每套房源进行全面评估。
 
-评估维度（每项 1-10 分）：
-1. 性价比（25%）：相比该区域市场价是否合理
-2. 安全性（30%）：根据你对 Stockholm 各街区治安的了解评估
+评估维度（每项 1-10 分，1=极差，10=极佳）：
+1. 安全性（权重最高，40%）：根据你对 Stockholm 各街区治安、犯罪率、社会问题的了解，严格评估该
+   区域的安全状况。治安差、有明显社会问题（哪怕只是中等程度——不是只有帮派火拼、枪击这种极端
+   情况才算）的区域都必须如实打低分，不要因为房子本身条件好就手下留情，也不要因为拿不准就给中
+   庸的 5-6 分敷衍——你的判断会决定这套房源是否直接被排除，模棱两可等于纵容。
+2. 性价比（20%）：相比该区域市场价是否合理
 3. 楼层评价（15%）：底楼 bottenvåning / våning 1 扣分，中间楼层加分
 4. 户型质量（15%）：房间布局是否合理、面积是否够用
-5. 投资潜力（5%）：升值空间、区域发展前景
+5. 投资潜力（10%）：升值空间、区域发展前景
 
-总分 1-10，输出 JSON 格式。"""
+硬性规则：安全性 <= 6 分（含"中等"风险）的房源会被程序直接排除、不予收录，不是降分处理——这条
+规则由代码强制执行，不是你需要考虑的，所以请如实、严格地打安全性分数，不要为了不想让房源被排除
+而虚高。
+
+总分 1-10，输出 JSON 格式（total_score 仅供参考，最终总分由各维度分数按权重重新计算）。"""
 
 SCORING_USER_PROMPT_TEMPLATE = """请评估以下 {count} 套房源：
 
@@ -239,14 +252,46 @@ def _build_scoring_input(listings: list) -> str:
     return json.dumps(items, ensure_ascii=False, indent=2)
 
 
+# 各维度权重：安全性权重最高。总分由这里的权重计算得出，不直接采信模型自己给的 total_score。
+_SCORE_WEIGHTS = {"safety": 0.40, "value": 0.20, "floor": 0.15, "layout": 0.15, "potential": 0.10}
+
+# 安全性 <= 此分（含"中等"风险，不只是明确危险）的房源直接从收录结果里排除，
+# 不是靠总分封顶弱化展示——用户明确要求哪怕中等风险的地区也不收录。
+SAFETY_EXCLUDE_THRESHOLD = 6
+
+
+def _compute_total_score(scores: dict, fallback_total: Any) -> int:
+    try:
+        weighted = sum(float((scores or {}).get(dim, 5)) * w for dim, w in _SCORE_WEIGHTS.items())
+    except (TypeError, ValueError):
+        return max(1, min(10, int(fallback_total or 5)))
+    return max(1, min(10, int(round(weighted))))
+
+
+def _is_unsafe(entry: dict) -> bool:
+    safety = (entry.get("scores") or {}).get("safety")
+    return safety is not None and safety <= SAFETY_EXCLUDE_THRESHOLD
+
+
+def _purge_unsafe(db: dict) -> int:
+    """把安全性评分 <= SAFETY_EXCLUDE_THRESHOLD 的房源直接从数据库删除（不只是从
+    本次展示里隐藏）。只清理已经评过分的条目——还没评分的新房源不受影响。"""
+    entries = db.get("listings", {})
+    to_remove = [k for k, e in entries.items() if _is_unsafe(e)]
+    for k in to_remove:
+        del entries[k]
+    return len(to_remove)
+
+
 def _parse_scores(api_response: dict, count: int) -> list[dict]:
     items = api_response.get("items", []) if isinstance(api_response, dict) else []
     results = []
     for item in items:
+        scores = item.get("scores", {})
         results.append({
             "url": item.get("url", ""),
-            "total_score": max(1, min(10, int(item.get("total_score", 5)))),
-            "scores": item.get("scores", {}),
+            "total_score": _compute_total_score(scores, item.get("total_score", 5)),
+            "scores": scores,
             "verdict_zh": item.get("verdict_zh", ""),
             "floor_issue": item.get("floor_issue"),
             "safety_concern": item.get("safety_concern"),
@@ -303,11 +348,28 @@ def _dict_to_listing(d: dict) -> Any:
         "living_area", "listing_type", "source", "city", "image_url", "monthly_fee"]})
 
 
+# 连续几次抓取都没看到才真正判定下架 —— 单次抓取不完整（翻页失败/网络抖动/
+# 结果本身有波动）不该把仍在架上的房源误删。
+MISS_THRESHOLD = 2
+# 这次抓到的数量远少于库里已有的量，说明这次抓取本身就不完整/被拦截，
+# 完全不能拿"这次没看到"来判断下架，否则一次抓取失败就会把所有房源清空。
+SCRAPE_ANOMALY_MIN = 5
+SCRAPE_ANOMALY_RATIO = 0.5
+
+
 def _merge_into_db(db: dict, current: list) -> tuple[list[ScoredListing], int, int, int]:
-    """全量合并：对比数据库，标记新增/下架/变化。"""
+    """全量合并：网站有库里没有→新增；两边都有→保留/更新；库里有网站没有→
+    连续 MISS_THRESHOLD 次都抓不到才真正从数据库删除。"""
     now = datetime.now().isoformat()
     entries = db.setdefault("listings", {})
+
+    # 迁移清理：旧版本用 status=="removed" 做墓碑标记且从不真正删除，
+    # 这里一次性清掉，避免它们在新逻辑里被当成"还在库里"重新计算 miss_count。
+    for k in [k for k, e in entries.items() if e.get("status") == "removed"]:
+        del entries[k]
+
     current_keys = {_listing_key(l) for l in current}
+    prev_total = len(entries)
 
     new_urls: set[str] = set()
     changed_keys: set[str] = set()
@@ -321,28 +383,35 @@ def _merge_into_db(db: dict, current: list) -> tuple[list[ScoredListing], int, i
             entries[key] = {"url": l.url, "title": getattr(l, 'title', '') or getattr(l, 'address', ''),
                 "address": getattr(l, 'address', ''), **snap, "source": getattr(l, 'source', ''),
                 "image_url": getattr(l, 'image_url', None), "monthly_fee": getattr(l, 'monthly_fee', None),
-                "first_seen": now, "last_seen": now, "status": "active", "removed_at": None,
+                "first_seen": now, "last_seen": now, "miss_count": 0,
                 "total_score": 5, "scores": {}, "verdict_zh": "", "floor_issue": None, "safety_concern": None}
         else:
-            ex["last_seen"] = now; ex["status"] = "active"; ex["removed_at"] = None
+            ex["last_seen"] = now; ex["miss_count"] = 0
             ex["title"] = getattr(l, 'title', '') or getattr(l, 'address', '')
-            old = {k: ex.get(k) for k in snap}
+            old = {k2: ex.get(k2) for k2 in snap}
             if snap != old:
                 changed_keys.add(key); ex.update(snap)
                 ex["total_score"] = 5; ex["scores"] = {}; ex["verdict_zh"] = ""
             ex["image_url"] = getattr(l, 'image_url', ex.get("image_url"))
 
     removed = 0
-    for key, ex in entries.items():
-        if ex.get("status") == "removed":
-            continue
-        if key not in current_keys:
-            ex["status"] = "removed"; ex["removed_at"] = now; removed += 1
+    scrape_looks_broken = (prev_total >= SCRAPE_ANOMALY_MIN
+        and len(current) < max(SCRAPE_ANOMALY_MIN, prev_total * SCRAPE_ANOMALY_RATIO))
+    if scrape_looks_broken:
+        logger.warning("本次抓取仅 %d 套，远少于库内 %d 套，疑似抓取不完整/被拦截，本轮跳过下架判定",
+                       len(current), prev_total)
+    else:
+        for key in list(entries.keys()):
+            if key in current_keys:
+                continue
+            ex = entries[key]
+            ex["miss_count"] = ex.get("miss_count", 0) + 1
+            if ex["miss_count"] >= MISS_THRESHOLD:
+                del entries[key]
+                removed += 1
 
     merged = []
     for key, ex in entries.items():
-        if ex.get("status") == "removed":
-            continue
         status = "new" if ex["url"] in new_urls else ("updated" if key in changed_keys else "active")
         merged.append(ScoredListing(listing=_dict_to_listing(ex), total_score=ex.get("total_score", 5),
             scores=ex.get("scores", {}), verdict_zh=ex.get("verdict_zh", ""),
@@ -375,9 +444,11 @@ async def run_pipeline(*, search_config: dict | None = None, headless: bool = Tr
     try:
         async with BooliScraper(headless=headless, max_pages=cfg["pages"]) as s:
             for l in await s.search(search_url=b_url(q=cfg["q"], item_types=cfg["item_types"],
-                    max_price=cfg["max_price"], min_price=cfg.get("min_price"), sort=cfg.get("sort"))):
+                    max_price=cfg["max_price"], min_price=cfg.get("min_price"),
+                    min_rooms=cfg.get("min_rooms"), max_rooms=cfg.get("max_rooms"),
+                    sort=cfg.get("sort"))):
                 l.source = "booli"; all_l.append(l)
-        logger.info("  Booli: %d", sum(1 for l in all_l if l.source == "booli"))
+        logger.warning("  Booli: %d", sum(1 for l in all_l if l.source == "booli"))
     except Exception as e:
         logger.warning("  Booli 失败: %s", e)
 
@@ -389,7 +460,7 @@ async def run_pipeline(*, search_config: dict | None = None, headless: bool = Tr
                         item_types=cfg["item_types"], max_price=cfg["max_price"],
                         min_price=cfg.get("min_price"), min_rooms=cfg["min_rooms"], sort=cfg.get("sort"))):
                     l.source = "hemnet"; all_l.append(l)
-            logger.info("  Hemnet: %d", sum(1 for l in all_l if l.source == "hemnet"))
+            logger.warning("  Hemnet: %d", sum(1 for l in all_l if l.source == "hemnet"))
         except Exception as e:
             logger.warning("  Hemnet 失败: %s", e)
 
@@ -398,14 +469,14 @@ async def run_pipeline(*, search_config: dict | None = None, headless: bool = Tr
         if l.url not in seen:
             seen.add(l.url); uniq.append(l)
     all_l = uniq
-    logger.info("  去重后: %d 套", len(all_l))
+    logger.warning("  去重后: %d 套", len(all_l))
     if not all_l:
         logger.warning("无房源"); return []
 
     # === Step 2: 硬过滤 ===
     logger.info("Step 2: 硬过滤")
     filtered = apply_hard_filters(all_l)
-    logger.info("  过滤后: %d 套", len(filtered))
+    logger.warning("  过滤后: %d 套", len(filtered))
     if not filtered:
         logger.warning("无剩余房源"); return []
 
@@ -415,7 +486,7 @@ async def run_pipeline(*, search_config: dict | None = None, headless: bool = Tr
     db = _load_listings_db(_db_path(out_path.parent))
     prev = len(db.get("listings", {}))
     merged, new_n, rem_n, chg_n = _merge_into_db(db, filtered)
-    logger.info("  库原有 %d · 新增 %d · 变化 %d · 下架 %d · 活跃 %d", prev, new_n, chg_n, rem_n, len(merged))
+    logger.warning("  库原有 %d · 新增 %d · 变化 %d · 下架 %d · 活跃 %d", prev, new_n, chg_n, rem_n, len(merged))
 
     if dry_run:
         print(f"\n[Dry Run] 抓取 {len(all_l)} 过滤 {len(filtered)} 新增 {new_n} 下架 {rem_n} 变化 {chg_n}")
@@ -459,6 +530,17 @@ async def run_pipeline(*, search_config: dict | None = None, headless: bool = Tr
                 ex.update({k: scored_map[u].get(k) for k in ("total_score", "scores", "verdict_zh", "floor_issue", "safety_concern")})
         merged, _, _, _ = _merge_into_db(db, filtered)
 
+        # 排除必须在最后一次 merge 之后做：_merge_into_db 会把 filtered（本轮真实抓到的）
+        # 里还在架上的 URL 当"新增"重新写回 db，如果先 purge 再 merge，刚删掉的不安全
+        # 房源会被这次 merge 当成"新房源"重新插回去（带着空白评分）。
+        unsafe_urls = {m.listing.url for m in merged if _is_unsafe({"scores": m.scores})}
+        if unsafe_urls:
+            entries = db.get("listings", {})
+            for key in [k for k, e in entries.items() if e.get("url") in unsafe_urls]:
+                del entries[key]
+            merged = [m for m in merged if m.listing.url not in unsafe_urls]
+            logger.warning("  安全性排除: %d 套（安全性评分 <= %d）", len(unsafe_urls), SAFETY_EXCLUDE_THRESHOLD)
+
     # === Step 5: 保存 + HTML ===
     _save_listings_db(_db_path(out_path.parent), db)
     if output:
@@ -483,6 +565,24 @@ async def run_pipeline(*, search_config: dict | None = None, headless: bool = Tr
 # ======================================================================
 
 
+def _short_address(l) -> str:
+    """A brief, single-line address for card display.
+
+    Some Hemnet cards don't have a usable `address` (parsing bug elsewhere
+    falls back to '' rather than the wrong text), and some titles carry
+    marketing fluff ("...!", ", vån 5 av 5") -- strip at the first comma/
+    exclamation and cap the length so this stays a short address line, not
+    a whole sentence.
+    """
+    addr = (getattr(l, "address", "") or "").strip()
+    if not addr or "kr" in addr.lower():
+        addr = (getattr(l, "title", "") or "").strip()
+    addr = re.split(r"[!,]", addr)[0].strip()
+    if len(addr) > 40:
+        addr = addr[:40].rstrip() + "…"
+    return addr
+
+
 def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     high = [s for s in scored if s.total_score >= 7]
@@ -499,7 +599,10 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
         for item in grp:
             l = item.listing
             price_s = f"{l.price:,} kr".replace(",", " ") if l.price else ""
+            src = getattr(l, "source", "") or ""
+            src_label = {"hemnet": "Hemnet", "booli": "Booli"}.get(src, src)
             tags = " ".join(filter(None, [
+                f"<span class='tag source-tag source-{src}'>{src_label}</span>" if src_label else "",
                 f"<span class='tag'>{l.rooms} rum</span>" if l.rooms else "",
                 f"<span class='tag'>{l.living_area:.0f} m²</span>" if l.living_area else "",
                 f"<span class='tag type-tag'>🏠 {l.listing_type}</span>" if l.listing_type else "",
@@ -514,6 +617,8 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
             floor_warn = f"<p class='warn floor-warn'>⚠️ {item.floor_issue}</p>" if item.floor_issue else ""
             safety_warn = f"<p class='warn safety-warn'>🔒 {item.safety_concern}</p>" if item.safety_concern else ""
             img = f"<img src='{l.image_url}' alt=''>" if l.image_url else "<div class='no-img'>📷</div>"
+            addr_short = _short_address(l)
+            addr_line = f"<p class='address'>📍 {addr_short}{f' · {l.city}' if l.city else ''}</p>" if addr_short else ""
 
             cards += f"""
             <div class='card'>
@@ -522,6 +627,7 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
                     <div class='score-badge' style='background:{sc_c}'>{sc}</div>
                     {status_tag}
                     <h2><a href='{l.url}' target='_blank'>{l.title or l.address}</a></h2>
+                    {addr_line}
                     <p class='price'>{price_s}</p>
                     <div class='meta'>{tags}</div>
                     {floor_warn}{safety_warn}
@@ -534,7 +640,9 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
     for s in scored:
         if s.scores:
             sc = s.scores
-            details += f"<tr><td><a href='{s.listing.url}'>{s.listing.title or s.listing.address}</a></td><td><strong>{s.total_score}</strong></td><td>{sc.get('value','-')}</td><td>{sc.get('safety','-')}</td><td>{sc.get('floor','-')}</td><td>{sc.get('layout','-')}</td><td>{sc.get('potential','-')}</td><td style='font-size:12px;color:#666'>{s.verdict_zh}</td></tr>"
+            src = getattr(s.listing, "source", "") or ""
+            src_label = {"hemnet": "Hemnet", "booli": "Booli"}.get(src, src)
+            details += f"<tr><td><a href='{s.listing.url}'>{s.listing.title or s.listing.address}</a></td><td>{src_label}</td><td><strong>{s.total_score}</strong></td><td>{sc.get('value','-')}</td><td>{sc.get('safety','-')}</td><td>{sc.get('floor','-')}</td><td>{sc.get('layout','-')}</td><td>{sc.get('potential','-')}</td><td style='font-size:12px;color:#666'>{s.verdict_zh}</td></tr>"
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -571,10 +679,14 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
   .status-updated {{background:#f59e0b;color:#fff}}
   .card-body h2 {{font-size:.95rem;line-height:1.4;margin-bottom:2px;padding-right:40px}}
   .card-body h2 a {{color:#222;text-decoration:none}}
+  .address {{font-size:.82rem;color:#888;margin-bottom:6px}}
   .price {{font-size:1.15rem;font-weight:700;color:#db4c3f;margin-bottom:8px}}
   .meta {{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}}
   .tag {{display:inline-block;font-size:.75rem;padding:2px 8px;border-radius:4px;background:#f0f0f0;color:#555}}
   .type-tag {{background:#e8f0fe;color:#1967d2}}
+  .source-tag {{font-weight:600}}
+  .source-hemnet {{background:#fde8e8;color:#c53030}}
+  .source-booli {{background:#e6f4ea;color:#1e7a34}}
   .warn {{font-size:.78rem;padding:4px 8px;border-radius:4px;margin-top:4px}}
   .floor-warn {{background:#fff3cd;color:#856404}}
   .safety-warn {{background:#f8d7da;color:#721c24}}
@@ -591,7 +703,7 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
 {''.join(f'<a href="#card-{i}">{s.listing.title or s.listing.address[:30]}<span class="toc-score" style="float:right;font-weight:700;font-size:.75rem;color:{"#22c55e" if s.total_score>=7 else "#eab308" if s.total_score>=4 else "#ef4444"}">{s.total_score}</span></a>' for i,s in enumerate(scored[:50]))}
 <div style="margin-top:16px;padding-top:12px;border-top:1px solid #eee"><a href="#details-table">📊 详细评分表</a></div></nav>
 <div class="main-content">
-<div class="header"><h1>🏠 瑞典房源日报</h1><div class="criteria">📍 Stockholm · ≤ {cfg['max_price']:,} kr · ≥ {cfg['min_rooms']} rum · {'/'.join(cfg['item_types'])}</div></div>
+<div class="header"><a href="../../index.html" style="display:inline-block;margin-bottom:8px;font-size:.85rem;color:#2563eb;text-decoration:none">&larr; 返回首页</a><h1>🏠 瑞典房源日报</h1><div class="criteria">📍 Stockholm · ≤ {cfg['max_price']:,} kr · ≥ {cfg['min_rooms']} rum · {'/'.join(cfg['item_types'])}</div></div>
 <div class="summary-bar">
 <div class="summary-item"><div class="num" style="color:#22c55e">{len(high)}</div><div class="label">推荐</div></div>
 <div class="summary-item"><div class="num" style="color:#eab308">{len(mid)}</div><div class="label">可考虑</div></div>
@@ -600,7 +712,7 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
 </div>
 {cards}
 <div class="details-section" id="details-table"><h2>📊 详细评分表</h2>
-<table><thead><tr><th>房源</th><th>总分</th><th>性价比</th><th>安全性</th><th>楼层</th><th>户型</th><th>潜力</th><th>评语</th></tr></thead><tbody>{details}</tbody></table></div>
+<table><thead><tr><th>房源</th><th>来源</th><th>总分</th><th>性价比</th><th>安全性</th><th>楼层</th><th>户型</th><th>潜力</th><th>评语</th></tr></thead><tbody>{details}</tbody></table></div>
 <p class="footer">daily-digest-bot · Booli+Hemnet · DeepSeek 评分 · {now}</p>
 </div></div></body></html>"""
     Path(path).write_text(html, encoding="utf-8")

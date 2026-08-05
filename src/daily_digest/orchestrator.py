@@ -111,10 +111,16 @@ def run_daily(
         return digest
 
     summaries = summarize_articles(articles, channel, settings, chat_fn=chat_fn)
-    on_topic = [s for s in summaries if s.topic_tag != "无关"]
+    # "其他" is meant for important-but-uncategorized news, not a dumping ground
+    # for anything the map stage couldn't confidently call "无关" -- in practice
+    # low-importance "其他" items are noise, so drop those too.
+    on_topic = [
+        s for s in summaries
+        if s.topic_tag != "无关" and not (s.topic_tag == "其他" and s.importance <= 2)
+    ]
     dropped = len(summaries) - len(on_topic)
     if dropped:
-        logger.info("[%s] %d article(s) judged unrelated to this channel and excluded", channel.key, dropped)
+        logger.info("[%s] %d article(s) judged unrelated/low-value and excluded", channel.key, dropped)
     digest = build_digest(on_topic, channel, date_str, settings, chat_fn=chat_fn)
 
     _write_outputs(digest, channel, output_dir)

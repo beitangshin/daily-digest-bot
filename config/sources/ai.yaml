@@ -34,9 +34,11 @@ sources:
     category: "海外科技媒体"
     enabled: true
 
-  - name: "Ars Technica"
+  # 原来的 URL 是 "technology-lab" 综合科技板块（不限 AI），换成真正的 AI
+  # 专栏 feed（curl 验证过：标题就是 "AI - Ars Technica"）。
+  - name: "Ars Technica AI"
     type: rss
-    url: "https://feeds.arstechnica.com/arstechnica/technology-lab"
+    url: "https://arstechnica.com/ai/feed/"
     category: "海外科技媒体"
     enabled: true
 
@@ -74,11 +76,13 @@ sources:
     type: rss
     url: "https://rss.arxiv.org/rss/cs.AI"
     category: "学术论文"
-    enabled: true
+    enabled: false  # 用户明确不要论文，只要行业资讯
 
+  # 原来是 hnrss.org/frontpage（整个 HN 首页，什么都有），换成按关键词过滤
+  # 的版本，只保留首页里跟 AI 相关的条目——测过 hnrss 支持 q= 参数生效。
   - name: "Hacker News"
     type: rss
-    url: "https://hnrss.org/frontpage"
+    url: "https://hnrss.org/frontpage?q=AI"
     category: "综合科技"
     enabled: true
 
@@ -101,18 +105,22 @@ sources:
     category: "中文科技媒体"
     enabled: true
 
+  # 全站资讯 feed，不限 AI；试过 /information/AI/feed 但那是 SPA 页面不是真
+  # RSS，没找到可用的窄范围替代，先禁用。
   - name: "36氪"
     type: rss
     url: "https://36kr.com/feed"
     category: "中文科技媒体"
-    enabled: true
+    enabled: false
 
   # ========== 欧洲/其他 ==========
+  # 名字叫 AI，URL 其实是 thenextweb 全站 feed（不限 AI）；试了几个猜测的 AI
+  # 专栏/标签 URL 都是 404，没找到可用的窄范围替代，先禁用。
   - name: "TNW AI"
     type: rss
     url: "https://thenextweb.com/feed/"
     category: "欧洲科技媒体"
-    enabled: true
+    enabled: false
 
   - name: "IEEE Spectrum AI"
     type: rss

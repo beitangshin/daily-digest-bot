@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import json
 import logging
+import random
 import re
 import sys
 from dataclasses import asdict, dataclass
@@ -55,17 +56,33 @@ class BooliListing:
 
 SEARCH_BASE = "https://www.booli.se/sok/till-salu"
 
+# Booli 筛选面板里 objectType 复选框的真实 value（用 Playwright 点开 Sökfilter 抓包拿到
+# 的，不是猜的）：Villa / Lägenhet / Kedjehus-Parhus-Radhus / Fritidshus / Gård / Tomt/Mark
+# ——注意是瑞典语首字母大写的完整词，不是小写 slug；radhus/parhus/kedjehus 三种在 Booli
+# 上是合并成一个复选框的，没有单独的 value。
 BOOLI_TYPES = {
-    "villa": "villa",
-    "bostadsratt": "bostadsrätt",
-    "bostadsrätt": "bostadsrätt",
-    "lagenhet": "lägenhet",
-    "lägenhet": "lägenhet",
-    "fritidshus": "fritidshus",
-    "radhus": "radhus",
-    "parhus": "parhus",
-    "tomt": "tomt",
-    "gård": "gård",
+    "villa": "Villa",
+    "bostadsratt": "Lägenhet",
+    "bostadsrätt": "Lägenhet",
+    "lagenhet": "Lägenhet",
+    "lägenhet": "Lägenhet",
+    "fritidshus": "Fritidshus",
+    "radhus": "Kedjehus-Parhus-Radhus",
+    "parhus": "Kedjehus-Parhus-Radhus",
+    "kedjehus": "Kedjehus-Parhus-Radhus",
+    "tomt": "Tomt/Mark",
+    "gård": "Gård",
+    "gard": "Gård",
+}
+
+
+# Booli 的地域限定要走 areaIds（在网站搜索框里选"Stockholms län"这类建议项时，实际跳转
+# 到的 URL 是 ?areaIds=2，H1 会显示"Bostäder till salu i Stockholms län"）。q=Stockholm
+# 只是普通全文搜索，Booli 不会用它限定地域——之前一直用 q=，H1 显示的其实是
+# "Bostäder till salu i Sverige"（全瑞典），50 页里绝大部分抓的都是外地房源，
+# client 端的地理过滤器几乎把每页结果都滤空了，这也是可用房源特别少的主因之一。
+AREA_IDS: dict[str, str] = {
+    "stockholm": "2",  # Stockholms län
 }
 
 
@@ -82,24 +99,35 @@ def _build_search_url(
 ) -> str:
     from urllib.parse import urlencode
 
-    params: dict[str, str] = {}
+    params: dict[str, str | list[str]] = {}
     query = q or city or ""
-    if query:
+    area_id = AREA_IDS.get(query.strip().lower()) if query else None
+    if area_id:
+        params["areaIds"] = area_id
+    elif query:
+        logger.warning("unknown location %r, falling back to free-text q= (not geo-scoped)", query)
         params["q"] = query
+    # objectType 是重复 key（不是逗号拼接的单个 typ= 参数），值是瑞典语首字母大写的完整
+    # 词（如 "Lägenhet"）——用 Playwright 点开 Sökfilter 抓包确认的实际提交格式。
     if item_types:
-        params["typ"] = ",".join(BOOLI_TYPES.get(t.lower(), t.lower()) for t in item_types)
+        normalized = []
+        for t in item_types:
+            norm = BOOLI_TYPES.get(t.lower(), t)
+            if norm not in normalized:
+                normalized.append(norm)
+        params["objectType"] = normalized
     if min_price is not None:
-        params["pris_min"] = str(min_price)
+        params["minListPrice"] = str(min_price)
     if max_price is not None:
-        params["pris_max"] = str(max_price)
+        params["maxListPrice"] = str(max_price)
     if min_rooms is not None:
-        params["rum_min"] = str(min_rooms)
+        params["minRooms"] = str(min_rooms)
     if max_rooms is not None:
-        params["rum_max"] = str(max_rooms)
+        params["maxRooms"] = str(max_rooms)
     if sort:
         params["sort"] = sort
 
-    return SEARCH_BASE + "?" + urlencode(params)
+    return SEARCH_BASE + "?" + urlencode(params, doseq=True)
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +285,19 @@ class BooliScraper:
                 logger.info("dismissed cookie banner")
         except Exception:
             pass
+        try:
+            # 兜底：万一按钮点击没成功（CMP 换了/文案变了），强制把弹窗容器摘掉，
+            # 避免它一直挡在页面上阻止后续点击（翻页等）。
+            await self._page.evaluate(
+                """() => {
+                    document.querySelectorAll(
+                        '#didomi-host, .didomi-popup-backdrop, #didomi-popup, ' +
+                        '[id*="usercentrics"], #onetrust-consent-sdk, [id*="CybotCookiebotDialog"]'
+                    ).forEach(e => e.remove());
+                }"""
+            )
+        except Exception:
+            pass
 
     async def _extract_listings(self) -> list[BooliListing]:
         """Extract listing cards from the current Booli search page."""
@@ -356,12 +397,17 @@ class BooliScraper:
                     elif "/fritidshus-" in url:
                         listing_type = "fritidshus"
                     else:
-                        # Try from "Lägenhet · ..." pattern in text
+                        # Try from "Lägenhet · ..." pattern in text. Note: this maps
+                        # card text -> our internal slug, the opposite direction of
+                        # BOOLI_TYPES (which maps our slug -> Booli's objectType query
+                        # value), so it must not reuse that dict.
+                        _CARD_TYPE_ALIASES = {"lägenhet": "bostadsrätt", "lagenhet": "bostadsrätt",
+                                               "bostadsratt": "bostadsrätt"}
                         for line in lines:
                             for btype in ["villa", "bostadsrätt", "bostadsratt", "lägenhet", "lagenhet",
                                           "radhus", "fritidshus", "tomt", "parhus", "gård"]:
                                 if btype in line.lower():
-                                    listing_type = BOOLI_TYPES.get(btype.replace("ä", "a").replace("ö", "o"), btype)
+                                    listing_type = _CARD_TYPE_ALIASES.get(btype, btype)
                                     break
                             if listing_type:
                                 break
@@ -371,12 +417,20 @@ class BooliScraper:
                 if price and living_area and living_area > 0:
                     price_per_sqm = int(price / living_area)
 
-                # Parse city from address line if possible
+                # Parse city from the "Type · Area · Kommun" line. Taking only the
+                # last segment (the kommun, e.g. "Stockholm"/"Nacka") throws away
+                # the actual neighborhood (the middle segment, e.g. "Södermalm"/
+                # "Tollare") -- for inner-Stockholm listings the kommun alone is
+                # "Stockholm" for almost everything, so that made every card look
+                # like it was in the same place. Keep both: "Area, Kommun".
                 city = ""
                 if city_area and "·" in city_area:
-                    parts = city_area.split("·")
-                    if len(parts) >= 2:
-                        city = parts[-1].strip()
+                    parts = [p.strip() for p in city_area.split("·")]
+                    if len(parts) >= 3:
+                        area, kommun = parts[-2], parts[-1]
+                        city = f"{area}, {kommun}" if area and area != kommun else kommun
+                    elif len(parts) == 2:
+                        city = parts[-1]
                 if not city and city_area:
                     city = city_area
 
@@ -482,7 +536,7 @@ class BooliScraper:
         for page_num in range(1, pages + 1):
             logger.info("scraping page %d/%d", page_num, pages)
             await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(1)
+            await asyncio.sleep(random.uniform(1.0, 2.2))
 
             listings = await self._extract_listings()
             logger.info("  found %d listing(s) on page %d", len(listings), page_num)
@@ -491,7 +545,10 @@ class BooliScraper:
             if page_num < pages and await self._has_next_page():
                 if not await self._go_next_page():
                     break
-                await asyncio.sleep(2)
+                # 随机化翻页间隔，避免固定 2s 节奏被识别为爬虫；每 10 页额外歇一下
+                await asyncio.sleep(random.uniform(3.0, 6.5))
+                if page_num % 10 == 0:
+                    await asyncio.sleep(random.uniform(5.0, 10.0))
             else:
                 break
 

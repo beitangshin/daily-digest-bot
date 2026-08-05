@@ -29,6 +29,7 @@
   nav#toc a { display: block; font-size: 13px; color: var(--muted); text-decoration: none; padding: 3px 0; line-height: 1.4; }
   nav#toc a:hover { color: var(--accent); }
   main { flex: 1; padding: 32px 40px; max-width: 780px; }
+  a.back-home { display: inline-block; margin-bottom: 10px; font-size: 13px; color: var(--accent); text-decoration: none; }
   h1 { font-size: 26px; margin: 0 0 4px; }
   .meta { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
   .exec-summary { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 32px; }
@@ -70,11 +71,9 @@
     {% endfor %}
   </div>
   {% endfor %}
-  <div class="toc-section">
-    <a href="../../index.html">&larr; 返回首页</a>
-  </div>
 </nav>
 <main>
+  <a href="../../index.html" class="back-home">&larr; 返回首页</a>
   <h1>{{ digest.channel_name }}</h1>
   <div class="meta">{{ digest.date_str }} · 共扫描 {{ digest.source_count }} 个信息源，收录 {{ digest.article_count }} 篇今日文章</div>
 

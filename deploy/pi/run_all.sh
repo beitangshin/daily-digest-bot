@@ -13,6 +13,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 VENV_PYTHON="$REPO_DIR/.venv/bin/python"
 LOG="$REPO_DIR/output/run.log"
+cd "$REPO_DIR"
 
 echo "[$(date)] ======== 全频道运行开始 ========" >> "$LOG"
 
@@ -23,6 +24,5 @@ echo "[$(date)] --- 自动驾驶日报 ---" >> "$LOG"
 "$VENV_PYTHON" -m daily_digest.cli run --channel autonomous_driving >> "$LOG" 2>&1
 
 echo "[$(date)] --- 瑞典房源日报（Playwright 爬虫 + AI 评分）---" >> "$LOG"
-"$VENV_PYTHON" housing_digest.py -o "$REPO_DIR/output/housing/latest.html" >> "$LOG" 2>&1
-
+"$VENV_PYTHON" "$REPO_DIR/housing_digest.py" -o "$REPO_DIR/output/housing/latest.html" >> "$LOG" 2>&1
 echo "[$(date)] ======== 全频道运行结束 ========" >> "$LOG"

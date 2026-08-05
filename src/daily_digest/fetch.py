@@ -90,9 +90,24 @@ def discover_feed_url(homepage_url: str, client: httpx.Client) -> str | None:
 
 
 def fetch_rss_articles(
-    source: Source, feed_url: str, tz: ZoneInfo, cutoff: datetime, settings: Settings
+    source: Source, feed_url: str, tz: ZoneInfo, cutoff: datetime, settings: Settings, client: httpx.Client
 ) -> list[Article]:
-    parsed = feedparser.parse(feed_url)
+    """Fetch `feed_url` (with `client`'s timeout, so a stalled server can't
+    hang the whole run) and parse it into candidate articles."""
+    try:
+        resp = client.get(feed_url)
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.warning("feed %s (%s) failed to fetch: %s", source.name, feed_url, exc)
+        return []
+
+    return parse_feed_content(source, feed_url, resp.content, tz, cutoff, settings)
+
+
+def parse_feed_content(
+    source: Source, feed_url: str, content: bytes | str, tz: ZoneInfo, cutoff: datetime, settings: Settings
+) -> list[Article]:
+    parsed = feedparser.parse(content)
     if parsed.bozo and not parsed.entries:
         logger.warning(
             "feed %s (%s) failed to parse: %s",
@@ -174,13 +189,13 @@ def fetch_source(source: Source, settings: Settings, tz: ZoneInfo, cutoff: datet
     with _new_client(settings) as client:
         try:
             if source.type == "rss":
-                return fetch_rss_articles(source, source.url, tz, cutoff, settings)
+                return fetch_rss_articles(source, source.url, tz, cutoff, settings, client)
 
             # type == "html": try to discover a real feed first (far more
             # reliable than scraping links), fall back to link-scraping.
             feed_url = discover_feed_url(source.url, client)
             if feed_url:
-                found = fetch_rss_articles(source, feed_url, tz, cutoff, settings)
+                found = fetch_rss_articles(source, feed_url, tz, cutoff, settings, client)
                 if found:
                     return found
             return fetch_html_fallback_articles(source, client, settings)

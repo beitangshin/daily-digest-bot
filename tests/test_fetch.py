@@ -3,7 +3,7 @@ from email.utils import format_datetime
 from zoneinfo import ZoneInfo
 
 from daily_digest.config import Settings
-from daily_digest.fetch import fetch_rss_articles
+from daily_digest.fetch import parse_feed_content
 from daily_digest.models import Source
 
 
@@ -56,7 +56,7 @@ def test_fetch_rss_articles_filters_by_cutoff():
     feed_xml = _rss_feed(format_datetime(recent), format_datetime(old))
 
     source = Source(name="Fake Source", url="unused", type="rss", category="测试")
-    articles = fetch_rss_articles(source, feed_xml, tz, cutoff, _settings())
+    articles = parse_feed_content(source, "unused", feed_xml, tz, cutoff, _settings())
 
     assert len(articles) == 1
     assert articles[0].title == "Recent article"
@@ -67,5 +67,5 @@ def test_fetch_rss_articles_returns_empty_for_unparseable_feed():
     tz = ZoneInfo("UTC")
     cutoff = datetime.now(tz) - timedelta(hours=24)
     source = Source(name="Fake Source", url="unused", type="rss", category="测试")
-    articles = fetch_rss_articles(source, "not xml at all", tz, cutoff, _settings())
+    articles = parse_feed_content(source, "unused", "not xml at all", tz, cutoff, _settings())
     assert articles == []
