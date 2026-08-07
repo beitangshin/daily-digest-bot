@@ -15,11 +15,13 @@ sources:
     category: "海外科技媒体"
     enabled: true
 
+  # InsideEVs 移除：2026-08-06 日志显示当天 403 拦截抓取 26 次，全部只能拿到
+  # 标题兜底，没有一篇拿到正文，判定为持续性反爬/付费墙站点。
   - name: "InsideEVs"
     type: rss
     url: "https://insideevs.com/rss/articles/all/"
     category: "海外科技媒体"
-    enabled: true
+    enabled: false
 
   - name: "CleanTechnica"
     type: rss

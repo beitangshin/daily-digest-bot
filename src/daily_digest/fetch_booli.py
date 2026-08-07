@@ -349,8 +349,15 @@ class BooliScraper:
                     m = re.search(r"(\d+[.,]?\d*)\s*(?:rum|rok)", line, re.IGNORECASE)
                     if m and rooms is None:
                         rooms = _parse_float(m.group(1))
-                    # Area
-                    m = re.search(r"(\d+)\s*m²", line)
+                    # Area -- villa/house cards often combine boarea + biarea
+                    # into one line, e.g. "134 + 60 m²" (living area + non-
+                    # heated secondary area). A plain r"(\d+)\s*m²" grabs
+                    # whichever number sits directly before "m²", which for
+                    # that combined format is the smaller trailing biarea
+                    # number, not the true living area. Allow an optional
+                    # "+ N" before the unit so the leading (boarea) number is
+                    # captured instead.
+                    m = re.search(r"(\d+)(?:\s*\+\s*\d+)?\s*m²", line)
                     if m and living_area is None:
                         va = _parse_float(m.group(1))
                         if va and va >= 8:  # sanity
@@ -372,7 +379,12 @@ class BooliScraper:
                 #   [Features like Balkong, Hiss...]
                 address = ""
                 city_area = ""
-                content_lines = [l for l in lines if not re.match(r"^(Spara|Snart|Idag|Imorgon|Mån|Tis|Ons|Tor|Fre|Lör|Sön)", l)]
+                # \b after the alternation matters: without it this prefix-matches
+                # real street names too, e.g. "Fredsgränd" (starts with "Fre",
+                # Friday's abbreviation) or "Torsgatan"/"Torsplan" (starts with
+                # "Tor", Thursday's abbreviation) -- both common Stockholm streets
+                # -- silently dropping the address line and leaving it empty.
+                content_lines = [l for l in lines if not re.match(r"^(Spara|Snart|Idag|Imorgon|Mån|Tis|Ons|Tor|Fre|Lör|Sön)\b", l)]
                 for j, line in enumerate(content_lines):
                     if "·" in line and any(t in line.lower() for t in ["villa", "lägenhet", "bostadsrätt", "radhus", "fritidshus", "parhus", "gård", "tomt", "hus"]):
                         city_area = line

@@ -47,6 +47,7 @@
     padding: 4px 10px; text-decoration: none; color: var(--fg); background: var(--card);
   }
   .source-pill:hover { border-color: var(--accent); color: var(--accent); }
+  .source-pill-nolink { display: inline-block; color: var(--muted); border-style: dashed; cursor: default; }
   .key-points { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
   details.source-detail { margin-top: 6px; }
   details.source-detail summary { cursor: pointer; font-size: 12px; color: var(--muted); }
@@ -102,9 +103,15 @@
       <p class="synthesis">{{ item.synthesis_zh }}</p>
       <div class="source-list">
         {% for s in item.sources %}
-        <a class="source-pill" href="{{ s.article.url }}" target="_blank" rel="noopener noreferrer">
-          {{ s.article.source_name }}{% if s.article.published_at %} · {{ s.article.published_at.strftime("%H:%M") }}{% endif %} ↗
+        {% if s.article.text %}
+        <a class="source-pill" href="articles/{{ s.article.id }}.html">
+          {{ s.article.source_name }}{% if s.article.published_at %} · {{ s.article.published_at.strftime("%H:%M") }}{% endif %}
         </a>
+        {% else %}
+        <span class="source-pill source-pill-nolink">
+          {{ s.article.source_name }}{% if s.article.published_at %} · {{ s.article.published_at.strftime("%H:%M") }}{% endif %} · 仅标题
+        </span>
+        {% endif %}
         {% endfor %}
       </div>
       {% for s in item.sources %}
@@ -124,7 +131,7 @@
   </section>
   {% endfor %}
 
-  <footer>由 daily-digest-bot 自动生成 · DeepSeek 模型摘要，内容可能有误，请以原文链接为准。</footer>
+  <footer>由 daily-digest-bot 自动生成 · DeepSeek 模型摘要，内容可能有误。来源链接点开是本地存档的正文（个人存档用途），标"仅标题"的说明抓取时正文获取失败，只有标题信息。</footer>
 </main>
 </body>
 </html>

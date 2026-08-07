@@ -1,15 +1,20 @@
 """Render a Digest as a self-contained local HTML page (no CDN/network deps),
-with an in-page table of contents for jumping between items, and links out to
-every original source. Also maintains a tabbed `index.html` that lists every
+with an in-page table of contents for jumping between items, and links to a
+locally-archived copy of each article's extracted text (see
+write_article_archives) instead of the original external URL -- so reading
+the digest never requires clicking through to a source that may since have
+gone behind a paywall. Also maintains a tabbed `index.html` that lists every
 configured channel's history (see channels.py).
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from .extract import MAX_CHARS_PER_ARTICLE
 from .models import Channel, Digest
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -23,6 +28,27 @@ _env = Environment(
 def render_digest_html(digest: Digest) -> str:
     template = _env.get_template("digest.html.jinja")
     return template.render(digest=digest)
+
+
+def write_article_archives(day_dir: Path, digest: Digest) -> None:
+    """Write one standalone reading page per article that has extracted full
+    text, into day_dir/articles/<article.id>.html -- so digest.html/.md can
+    link to a local copy instead of the original (possibly paywalled) URL."""
+    seen: set[str] = set()
+    articles_dir = day_dir / "articles"
+    template = _env.get_template("article_archive.html.jinja")
+    for section in digest.sections:
+        for item in section.items:
+            for s in item.sources:
+                article = s.article
+                if not article.text or article.id in seen:
+                    continue
+                seen.add(article.id)
+                articles_dir.mkdir(parents=True, exist_ok=True)
+                paragraphs = [p.strip() for p in re.split(r"\n+", article.text) if p.strip()]
+                truncated = len(article.text) >= MAX_CHARS_PER_ARTICLE
+                html = template.render(article=article, paragraphs=paragraphs, truncated=truncated)
+                (articles_dir / f"{article.id}.html").write_text(html, encoding="utf-8")
 
 
 def write_day_meta(day_dir: Path, digest: Digest) -> None:

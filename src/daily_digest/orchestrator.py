@@ -16,7 +16,7 @@ from .extract import enrich_all
 from .fetch import fetch_all
 from .llm import ChatFn, build_digest, summarize_articles
 from .models import Article, Channel, Digest, Source
-from .render_html import render_combined_index, render_digest_html, write_day_meta
+from .render_html import render_combined_index, render_digest_html, write_article_archives, write_day_meta
 from .render_markdown import render_markdown
 from .sourcesio import load_sources
 from .state import load_last_run_started_at, save_last_run_started_at
@@ -143,11 +143,15 @@ def _write_outputs(digest: Digest, channel: Channel, output_dir: Path) -> None:
     day_dir = channel_dir / digest.date_str
     day_dir.mkdir(parents=True, exist_ok=True)
 
+    # Must run before render_markdown/render_digest_html -- they link each
+    # source to its local archive file instead of the original URL.
+    write_article_archives(day_dir, digest)
+
     (day_dir / "digest.md").write_text(render_markdown(digest), encoding="utf-8")
     (day_dir / "digest.html").write_text(render_digest_html(digest), encoding="utf-8")
     write_day_meta(day_dir, digest)
 
-    (channel_dir / "latest.md").write_text(render_markdown(digest), encoding="utf-8")
+    (channel_dir / "latest.md").write_text(render_markdown(digest, archive_prefix=f"{digest.date_str}/"), encoding="utf-8")
 
     # The top-level index covers every configured channel (tabbed UI), not
     # just the one that just ran, so it always reflects the full picture.

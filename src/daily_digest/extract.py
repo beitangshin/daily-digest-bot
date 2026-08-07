@@ -18,7 +18,13 @@ from .models import Article
 
 logger = logging.getLogger(__name__)
 
-MAX_CHARS_PER_ARTICLE = 6000  # keeps each article within a safe LLM token budget
+# Sanity cap only -- guards against a pathological extraction (e.g. trafilatura
+# accidentally pulling in a huge amount of boilerplate/repeated content from a
+# malformed page) rather than an editorial choice, since article.text is now
+# also used as the full-text archive shown to the reader (render_html.py). The
+# separate, much smaller per-article budget actually sent to the LLM lives in
+# llm.py (map-stage prompt truncates independently) and is unaffected by this.
+MAX_CHARS_PER_ARTICLE = 50_000
 
 
 def enrich_article(article: Article, tz: ZoneInfo) -> Article:

@@ -180,6 +180,13 @@ def _parse_price(text: str | None) -> int | None:
         return None
 
 
+# A genuine price line is "<digits with space separators> kr" and nothing else
+# -- deliberately excludes "kr/mån" (fee) and "kr/m²" (price-per-area), which
+# would otherwise also parse as a plausible-looking number and get mistaken
+# for the price by a looser digits-only check.
+_PRICE_LINE_RE = re.compile(r"^\d[\d\s]*\s*kr$")
+
+
 def _parse_float(text: str | None) -> float | None:
     """Parse '3.5' or '3 5' → 3.5."""
     if not text:
@@ -482,10 +489,17 @@ class HemnetScraper:
                 # [Mäklartipset]
                 _city = ""
                 for idx, line in enumerate(lines):
-                    # Price line
-                    parsed_price = _parse_price(line)
-                    if parsed_price and 10000 < parsed_price < 100_000_000:
-                        price = parsed_price
+                    # Price line -- only the first match counts. Without this
+                    # guard, a stray number elsewhere in the card (visit
+                    # counts, price-trend %, a "similar listings" widget
+                    # bleeding into the card's DOM parent, etc.) could
+                    # silently overwrite an already-correct price later in
+                    # the loop, producing a wrong-but-plausible price that
+                    # passes the min/max price filter undetected.
+                    if price == 0 and _PRICE_LINE_RE.match(line):
+                        parsed_price = _parse_price(line)
+                        if parsed_price and 10000 < parsed_price < 100_000_000:
+                            price = parsed_price
                         # City = line before price
                         if idx >= 1:
                             before = lines[idx - 1]
@@ -506,8 +520,16 @@ class HemnetScraper:
                     rm = re.search(r"(\d+[.,]?\d*)\s*(?:rum|rok)", line, re.IGNORECASE)
                     if rm and rooms is None:
                         rooms = _parse_float(rm.group(1))
-                    # Area
-                    am = re.search(r"(\d+)\s*m²", line)
+                    # Area -- villa/house cards often combine boarea + biarea
+                    # into one line, e.g. "134 + 60 m²" (living area + non-
+                    # heated secondary area like a basement). A plain
+                    # r"(\d+)\s*m²" grabs whichever number sits directly
+                    # before "m²", which for that combined format is the
+                    # smaller trailing biarea number, not the true living
+                    # area -- silently corrupting living_area to a fraction
+                    # of the real value. Allow an optional "+ N" before the
+                    # unit so the leading (boarea) number is captured instead.
+                    am = re.search(r"(\d+)(?:\s*\+\s*\d+)?\s*m²", line)
                     if am and living_area is None:
                         va = _parse_float(am.group(1))
                         if va and va >= 8:

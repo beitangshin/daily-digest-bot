@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>{{ article.title }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #6b7280; --border: #e5e7eb; --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111417; --fg: #e6e6e6; --muted: #9aa4af; --border: #2a2f36; --accent: #6ea8fe; }
+  }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  main { max-width: 680px; margin: 0 auto; padding: 40px 24px; }
+  a.back { display: inline-block; margin-bottom: 16px; font-size: 13px; color: var(--accent); text-decoration: none; }
+  h1 { font-size: 22px; line-height: 1.4; margin: 0 0 8px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+  .body-text p { line-height: 1.85; margin: 0 0 16px; font-size: 15.5px; }
+  .archive-note { color: var(--muted); font-size: 12px; margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="../digest.html">&larr; 返回简报</a>
+  <h1>{{ article.title }}</h1>
+  <div class="meta">{{ article.source_name }}{% if article.published_at %} · {{ article.published_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}</div>
+  <div class="body-text">
+    {% for para in paragraphs %}
+    <p>{{ para }}</p>
+    {% endfor %}
+  </div>
+  <p class="archive-note">本地存档正文，来自 {{ article.source_name }}{% if truncated %}（原文过长，此处为截断版本）{% endif %}，内容版权归原作者/媒体所有，仅供个人阅读存档使用。</p>
+</main>
+</body>
+</html>

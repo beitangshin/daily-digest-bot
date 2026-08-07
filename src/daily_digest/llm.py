@@ -103,8 +103,8 @@ def _reduce_system_prompt(channel: Channel) -> str:
 """
 
 
-MAP_MAX_TOKENS = 2200
-REDUCE_MAX_TOKENS = 4000
+MAP_MAX_TOKENS = 4000
+REDUCE_MAX_TOKENS = 6000
 MAX_RETRIES = 3
 
 

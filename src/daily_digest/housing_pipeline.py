@@ -345,7 +345,7 @@ def _save_listings_db(db_path: Path, db: dict) -> None:
 
 def _dict_to_listing(d: dict) -> Any:
     return SimpleNamespace(**{k: d.get(k, '') for k in ["url", "title", "address", "price", "rooms",
-        "living_area", "listing_type", "source", "city", "image_url", "monthly_fee"]})
+        "living_area", "listing_type", "source", "city", "image_url", "monthly_fee", "first_seen"]})
 
 
 # 连续几次抓取都没看到才真正判定下架 —— 单次抓取不完整（翻页失败/网络抖动/
@@ -585,9 +585,19 @@ def _short_address(l) -> str:
 
 def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    today_str = now[:10]
     high = [s for s in scored if s.total_score >= 7]
     mid = [s for s in scored if 4 <= s.total_score <= 6]
     low = [s for s in scored if s.total_score <= 3]
+
+    # "今天新增" 用 first_seen 的日期判断（不是 status=="new"）—— status 只反映
+    # "相对上一次运行" 的变化，同一天内跑多次会失真；first_seen 是持久化的、
+    # 第一次真正发现这条房源的日期，同一天内重复运行也不会变，语义上更贴近
+    # 用户想要的"今天新增 vs 历史已有"。
+    new_today_count = sum(
+        1 for s in scored if str(getattr(s.listing, "first_seen", "") or "").startswith(today_str)
+    )
+    history_count = len(scored) - new_today_count
 
     cards = ""
     for title, grp, cls in [(f"🏆 推荐 ({len(high)})", high, "high"),
@@ -609,9 +619,11 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
             ]))
             sc = item.total_score
             sc_c = "#22c55e" if sc >= 7 else "#eab308" if sc >= 4 else "#ef4444"
+            is_new_today = str(getattr(l, "first_seen", "") or "").startswith(today_str)
+            added_bucket = "today" if is_new_today else "history"
             status_tag = ""
-            if item.status == "new":
-                status_tag = "<span class='status-tag status-new'>🆕 NY</span>"
+            if is_new_today:
+                status_tag = "<span class='status-tag status-new'>🆕 今日新增</span>"
             elif item.status == "updated":
                 status_tag = "<span class='status-tag status-updated'>📝 Ändrad</span>"
             floor_warn = f"<p class='warn floor-warn'>⚠️ {item.floor_issue}</p>" if item.floor_issue else ""
@@ -621,7 +633,7 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
             addr_line = f"<p class='address'>📍 {addr_short}{f' · {l.city}' if l.city else ''}</p>" if addr_short else ""
 
             cards += f"""
-            <div class='card'>
+            <div class='card' data-added='{added_bucket}'>
                 <div class='card-img'>{img}</div>
                 <div class='card-body'>
                     <div class='score-badge' style='background:{sc_c}'>{sc}</div>
@@ -635,14 +647,6 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
                 </div>
             </div>"""
         cards += "</div>"
-
-    details = ""
-    for s in scored:
-        if s.scores:
-            sc = s.scores
-            src = getattr(s.listing, "source", "") or ""
-            src_label = {"hemnet": "Hemnet", "booli": "Booli"}.get(src, src)
-            details += f"<tr><td><a href='{s.listing.url}'>{s.listing.title or s.listing.address}</a></td><td>{src_label}</td><td><strong>{s.total_score}</strong></td><td>{sc.get('value','-')}</td><td>{sc.get('safety','-')}</td><td>{sc.get('floor','-')}</td><td>{sc.get('layout','-')}</td><td>{sc.get('potential','-')}</td><td style='font-size:12px;color:#666'>{s.verdict_zh}</td></tr>"
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -674,9 +678,16 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
   .no-img {{display:flex;align-items:center;justify-content:center;height:100%;font-size:3rem;color:#aaa}}
   .card-body {{padding:14px;position:relative}}
   .score-badge {{position:absolute;top:-40px;right:12px;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1rem;color:#fff;box-shadow:0 2px 6px rgba(0,0,0,.2)}}
-  .status-tag {{position:absolute;top:8px;left:8px;padding:3px 8px;border-radius:4px;font-size:.7rem;font-weight:700;z-index:2}}
+  .status-tag {{display:inline-block;margin-bottom:6px;padding:3px 8px;border-radius:4px;font-size:.7rem;font-weight:700}}
   .status-new {{background:#22c55e;color:#fff}}
   .status-updated {{background:#f59e0b;color:#fff}}
+  .filter-bar {{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}}
+  .filter-btn {{appearance:none;border:1px solid #ddd;background:#fff;color:#555;border-radius:20px;padding:8px 16px;font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit}}
+  .filter-btn:hover {{border-color:#2563eb;color:#2563eb}}
+  .filter-btn.active {{background:#2563eb;border-color:#2563eb;color:#fff}}
+  .card.hidden-by-filter {{display:none}}
+  .cards.all-hidden {{display:none}}
+  .group-title.all-hidden {{display:none}}
   .card-body h2 {{font-size:.95rem;line-height:1.4;margin-bottom:2px;padding-right:40px}}
   .card-body h2 a {{color:#222;text-decoration:none}}
   .address {{font-size:.82rem;color:#888;margin-bottom:6px}}
@@ -691,17 +702,13 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
   .floor-warn {{background:#fff3cd;color:#856404}}
   .safety-warn {{background:#f8d7da;color:#721c24}}
   .verdict {{font-size:.82rem;color:#444;margin-top:6px;font-style:italic}}
-  .details-section {{margin-top:32px;background:#fff;border-radius:12px;padding:20px;overflow-x:auto}}
-  table {{width:100%;border-collapse:collapse;font-size:.82rem}}
-  th,td {{padding:8px 10px;text-align:left;border-bottom:1px solid #eee}}
-  th {{background:#f8fafc;font-weight:600;color:#555;position:sticky;top:0}}
   .footer {{margin-top:30px;font-size:.8rem;color:#999;text-align:center}}
   @media (max-width:900px) {{.layout {{flex-direction:column}} nav#toc {{width:auto;max-height:none;position:static}}}}
 </style></head><body>
 <div class="layout">
 <nav id="toc"><h2>📋 目录</h2><div style="margin-bottom:12px;font-size:.78rem;color:#888">{len(scored)} 套 · 评分排序</div>
 {''.join(f'<a href="#card-{i}">{s.listing.title or s.listing.address[:30]}<span class="toc-score" style="float:right;font-weight:700;font-size:.75rem;color:{"#22c55e" if s.total_score>=7 else "#eab308" if s.total_score>=4 else "#ef4444"}">{s.total_score}</span></a>' for i,s in enumerate(scored[:50]))}
-<div style="margin-top:16px;padding-top:12px;border-top:1px solid #eee"><a href="#details-table">📊 详细评分表</a></div></nav>
+</nav>
 <div class="main-content">
 <div class="header"><a href="../../index.html" style="display:inline-block;margin-bottom:8px;font-size:.85rem;color:#2563eb;text-decoration:none">&larr; 返回首页</a><h1>🏠 瑞典房源日报</h1><div class="criteria">📍 Stockholm · ≤ {cfg['max_price']:,} kr · ≥ {cfg['min_rooms']} rum · {'/'.join(cfg['item_types'])}</div></div>
 <div class="summary-bar">
@@ -710,11 +717,33 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
 <div class="summary-item"><div class="num" style="color:#ef4444">{len(low)}</div><div class="label">不推荐</div></div>
 <div class="summary-item"><div class="num">{len(scored)}</div><div class="label">活跃房源</div></div>
 </div>
+<div class="filter-bar" id="filter-bar">
+<button type="button" class="filter-btn active" data-filter="all" onclick="filterListings('all')">全部 ({len(scored)})</button>
+<button type="button" class="filter-btn" data-filter="today" onclick="filterListings('today')">🆕 今天新增 ({new_today_count})</button>
+<button type="button" class="filter-btn" data-filter="history" onclick="filterListings('history')">📚 历史房源 ({history_count})</button>
+</div>
 {cards}
-<div class="details-section" id="details-table"><h2>📊 详细评分表</h2>
-<table><thead><tr><th>房源</th><th>来源</th><th>总分</th><th>性价比</th><th>安全性</th><th>楼层</th><th>户型</th><th>潜力</th><th>评语</th></tr></thead><tbody>{details}</tbody></table></div>
 <p class="footer">daily-digest-bot · Booli+Hemnet · DeepSeek 评分 · {now}</p>
-</div></div></body></html>"""
+</div></div>
+<script>
+function filterListings(which) {{
+  document.querySelectorAll('.filter-btn').forEach(function (b) {{ b.classList.toggle('active', b.dataset.filter === which); }});
+  document.querySelectorAll('.cards').forEach(function (group) {{
+    var visibleCount = 0;
+    group.querySelectorAll('.card').forEach(function (card) {{
+      var show = which === 'all' || card.dataset.added === which;
+      card.classList.toggle('hidden-by-filter', !show);
+      if (show) visibleCount++;
+    }});
+    group.classList.toggle('all-hidden', visibleCount === 0);
+    var heading = group.previousElementSibling;
+    if (heading && heading.classList.contains('group-title')) {{
+      heading.classList.toggle('all-hidden', visibleCount === 0);
+    }}
+  }});
+}}
+</script>
+</body></html>"""
     Path(path).write_text(html, encoding="utf-8")
 
 
