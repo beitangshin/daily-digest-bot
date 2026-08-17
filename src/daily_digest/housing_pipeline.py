@@ -88,6 +88,14 @@ SEARCH_CONFIG = {
         "Botkyrka", "Tullinge", "Tumba",
         "Salem", "Rönninge", "Järfälla", "Jakobsberg", "Barkarby",
         "Upplands-Bro", "Kungsängen",
+        # 用户明确点名排除的具体街区（在允许的城市/自治市范围内，但本身不
+        # 想要）——这是硬编码的确定性排除，不依赖 AI 每次重新判断安全性
+        # 打分是否够低。城市/自治市级别的允许名单挡不住这些，因为它们的
+        # 上级城市（如 Sundbyberg）本身在 allowed_cities 里。都是瑞典警方
+        # "utsatta områden"名单上的区域：Rissne/Hallonbergen 属 Sundbyberg，
+        # Rinkeby/Tensta/Husby 属 Stockholm 市内（否则会被"Stockholm"兜底
+        # 放行）。
+        "Rissne", "Hallonbergen", "Rinkeby", "Tensta", "Husby",
     ],
 }
 
@@ -129,6 +137,15 @@ def _filter_by_type(listing) -> bool:
     return False
 
 
+def _filter_by_area_known(listing) -> bool:
+    """Hemnet's compact "Mäklartipset" sponsored-card format shows only
+    price/rooms, no m² at all -- confirmed by inspecting live card text, not
+    a parsing gap. Without area there's no price/m² and nothing for the AI
+    scoring to compare against, so these are excluded rather than shown with
+    a blank area."""
+    return bool(getattr(listing, "living_area", None))
+
+
 def _filter_by_city(listing) -> bool:
     """地理过滤：单词边界匹配，防止 'Bro' 误配 'Hällabrottet'。"""
     allowed = SEARCH_CONFIG.get("allowed_cities", [])
@@ -152,6 +169,7 @@ FILTERS: list[dict] = [
     {"name": "房间数", "enabled": True, "fn": _filter_by_rooms},
     {"name": "房型", "enabled": True, "fn": _filter_by_type},
     {"name": "地理过滤", "enabled": True, "fn": _filter_by_city},
+    {"name": "面积已知", "enabled": True, "fn": _filter_by_area_known},
     {"name": "楼层过滤", "enabled": False, "fn": lambda l: True},
 ]
 
@@ -181,6 +199,17 @@ def apply_hard_filters(listings: list) -> list:
 
 
 async def check_area_safety(areas: list[str]) -> dict[str, str]:
+    """搜索每个区域的治安信息喂给 AI 评分用。
+
+    之前用 https://www.google.com/search 抓取（正则匹配 class="...BNeawe..."
+    的结果 div）——这套 2024 年后已经彻底失效：Google 对无 Cookie/无 JS 的请求
+    一律返回一个"继续前请先同意"的欧盟 Cookie 同意墙页面（200 状态码，但页面
+    里根本没有搜索结果，BNeawe 正则永远 0 匹配）。也就是说这个安全检查从加上
+    的那天起可能就一直在悄悄返回空结果——AI 评分时"安全参考信息"始终是兜底
+    的"无特殊安全信息"，安全性分数全靠模型自己模糊的先验知识现场编，这也是
+    Rissne（瑞典警方"utsatta områden"名单常年在榜的高风险街区）能混到 7 分
+    的关键原因之一。改用 DuckDuckGo 的 HTML 版端点，没有 Cookie 墙，实测能
+    正常拿到治安相关摘要。"""
     if not areas:
         return {}
     unique_areas = list(dict.fromkeys(areas))
@@ -192,11 +221,11 @@ async def check_area_safety(areas: list[str]) -> dict[str, str]:
         try:
             import httpx
             from urllib.parse import urlencode
-            async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0"}, timeout=10.0, follow_redirects=True) as client:
-                resp = await client.get(f"https://www.google.com/search?{urlencode({'q': f'{area} Stockholm brottslighet trygghet 2024 2025'})}")
+            async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=10.0, follow_redirects=True) as client:
+                resp = await client.get(f"https://html.duckduckgo.com/html/?{urlencode({'q': f'{area} Stockholm brottslighet trygghet utsatt område'})}")
                 if resp.status_code == 200:
-                    snippets = re.findall(r'<div[^>]*class="[^"]*BNeawe[^"]*"[^>]*>(.*?)</div>', resp.text, re.DOTALL)
-                    combined = " ".join(snippets[:5])
+                    snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', resp.text, re.DOTALL)
+                    combined = " ".join(re.sub(r"<[^>]+>", "", s) for s in snippets[:5])
                     if combined:
                         safety_info[area] = combined[:1000]
         except Exception:
@@ -544,7 +573,7 @@ async def run_pipeline(*, search_config: dict | None = None, headless: bool = Tr
     # === Step 5: 保存 + HTML ===
     _save_listings_db(_db_path(out_path.parent), db)
     if output:
-        _write_html(merged, output, cfg)
+        _write_html(merged, output, cfg, cf_beacon_token=settings.cf_web_analytics_token)
         print(f"✓ 已保存: {output}")
         d = datetime.now().strftime("%Y-%m-%d")
         hd = Path(output).parent / d
@@ -554,7 +583,7 @@ async def run_pipeline(*, search_config: dict | None = None, headless: bool = Tr
         try:
             from .render_html import render_combined_index
             from .channels import load_channels
-            (Path(output).parents[1] / "index.html").write_text(render_combined_index(Path(output).parents[1], load_channels()), encoding="utf-8")
+            (Path(output).parents[1] / "index.html").write_text(render_combined_index(Path(output).parents[1], load_channels(), cf_beacon_token=settings.cf_web_analytics_token), encoding="utf-8")
         except Exception:
             pass
     return merged
@@ -583,7 +612,7 @@ def _short_address(l) -> str:
     return addr
 
 
-def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
+def _write_html(scored: list[ScoredListing], path: str, cfg: dict, cf_beacon_token: str | None = None) -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     today_str = now[:10]
     high = [s for s in scored if s.total_score >= 7]
@@ -599,6 +628,13 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
     )
     history_count = len(scored) - new_today_count
 
+    # 卡片的全局序号必须跟目录锚点 (#card-N) 用同一套编号，且必须跟目录里 N 对应的
+    # 那一条房源保持一致 -- 之所以能简单地用一个跨分组递增的计数器实现，是因为
+    # merged.sort(key=lambda x: x.total_score, reverse=True) 已经保证了 scored 整体
+    # 按分数降序排列，而 high/mid/low 又是按分数区间切出来的互斥分组，所以"按 high,
+    # mid, low 顺序拼接"跟"scored 原始顺序"是同一个顺序，目录里第 N 个链接和卡片区
+    # 第 N 张卡片天然对应同一条房源。
+    card_idx = 0
     cards = ""
     for title, grp, cls in [(f"🏆 推荐 ({len(high)})", high, "high"),
                             (f"📋 可考虑 ({len(mid)})", mid, "mid"),
@@ -608,6 +644,8 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
         cards += f"<h2 class='group-title {cls}'>{title}</h2><div class='cards'>"
         for item in grp:
             l = item.listing
+            city = (getattr(l, "city", "") or "").strip()
+            search_blob = " ".join(filter(None, [l.title, l.address, city])).lower().replace("'", "")
             price_s = f"{l.price:,} kr".replace(",", " ") if l.price else ""
             src = getattr(l, "source", "") or ""
             src_label = {"hemnet": "Hemnet", "booli": "Booli"}.get(src, src)
@@ -633,7 +671,7 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
             addr_line = f"<p class='address'>📍 {addr_short}{f' · {l.city}' if l.city else ''}</p>" if addr_short else ""
 
             cards += f"""
-            <div class='card' data-added='{added_bucket}'>
+            <div class='card' id='card-{card_idx}' data-added='{added_bucket}' data-city='{city.replace("'", "&#39;")}' data-search='{search_blob.replace("'", "&#39;")}'>
                 <div class='card-img'>{img}</div>
                 <div class='card-body'>
                     <div class='score-badge' style='background:{sc_c}'>{sc}</div>
@@ -646,11 +684,30 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
                     {f"<p class='verdict'>{item.verdict_zh}</p>" if item.verdict_zh else ""}
                 </div>
             </div>"""
+            card_idx += 1
         cards += "</div>"
 
+    # 区域下拉框的选项从本次实际抓到的房源里统计出来，不是写死的城市列表 --
+    # city 字段本身可能是 "Södermalm, Stockholm" 这种"区域, 市"组合（见 fetch_booli.py），
+    # 直接按这个原始字符串分组，跟卡片上 data-city 完全一致，不用维护额外的城市/区域映射表。
+    region_counts: dict[str, int] = {}
+    for s in scored:
+        c = (getattr(s.listing, "city", "") or "").strip()
+        if c:
+            region_counts[c] = region_counts.get(c, 0) + 1
+    region_options = "".join(
+        f"<option value='{c.replace(chr(39), '&#39;')}'>{c} ({n})</option>"
+        for c, n in sorted(region_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+
+    beacon = (
+        f"""<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{{"token": "{cf_beacon_token}"}}'></script>"""
+        if cf_beacon_token else ""
+    )
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>瑞典房源日报 · AI 评分 · {now[:10]}</title>
+{beacon}
 <style>
   * {{margin:0;padding:0;box-sizing:border-box}}
   body {{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#f5f5f5;color:#222;padding:20px}}
@@ -681,10 +738,14 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
   .status-tag {{display:inline-block;margin-bottom:6px;padding:3px 8px;border-radius:4px;font-size:.7rem;font-weight:700}}
   .status-new {{background:#22c55e;color:#fff}}
   .status-updated {{background:#f59e0b;color:#fff}}
-  .filter-bar {{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}}
+  .filter-bar {{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}}
   .filter-btn {{appearance:none;border:1px solid #ddd;background:#fff;color:#555;border-radius:20px;padding:8px 16px;font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit}}
   .filter-btn:hover {{border-color:#2563eb;color:#2563eb}}
   .filter-btn.active {{background:#2563eb;border-color:#2563eb;color:#fff}}
+  #region-select {{appearance:none;border:1px solid #ddd;background:#fff;color:#555;border-radius:20px;padding:8px 16px;font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit}}
+  #region-select:hover {{border-color:#2563eb;color:#2563eb}}
+  #search-input {{border:1px solid #ddd;background:#fff;color:#222;border-radius:20px;padding:8px 16px;font-size:.85rem;font-family:inherit;flex:1;min-width:160px;max-width:280px}}
+  #search-input:focus {{outline:none;border-color:#2563eb}}
   .card.hidden-by-filter {{display:none}}
   .cards.all-hidden {{display:none}}
   .group-title.all-hidden {{display:none}}
@@ -721,17 +782,26 @@ def _write_html(scored: list[ScoredListing], path: str, cfg: dict) -> None:
 <button type="button" class="filter-btn active" data-filter="all" onclick="filterListings('all')">全部 ({len(scored)})</button>
 <button type="button" class="filter-btn" data-filter="today" onclick="filterListings('today')">🆕 今天新增 ({new_today_count})</button>
 <button type="button" class="filter-btn" data-filter="history" onclick="filterListings('history')">📚 历史房源 ({history_count})</button>
+<select id="region-select" onchange="filterRegion(this.value)">
+<option value="all">📍 全部区域 ({len(scored)})</option>
+{region_options}
+</select>
+<input type="search" id="search-input" placeholder="🔍 搜索地址/小区..." oninput="filterSearch(this.value)">
 </div>
 {cards}
 <p class="footer">daily-digest-bot · Booli+Hemnet · DeepSeek 评分 · {now}</p>
 </div></div>
 <script>
-function filterListings(which) {{
-  document.querySelectorAll('.filter-btn').forEach(function (b) {{ b.classList.toggle('active', b.dataset.filter === which); }});
+var filterState = {{ status: 'all', region: 'all', q: '' }};
+
+function applyFilters() {{
   document.querySelectorAll('.cards').forEach(function (group) {{
     var visibleCount = 0;
     group.querySelectorAll('.card').forEach(function (card) {{
-      var show = which === 'all' || card.dataset.added === which;
+      var showStatus = filterState.status === 'all' || card.dataset.added === filterState.status;
+      var showRegion = filterState.region === 'all' || card.dataset.city === filterState.region;
+      var showSearch = !filterState.q || card.dataset.search.indexOf(filterState.q) !== -1;
+      var show = showStatus && showRegion && showSearch;
       card.classList.toggle('hidden-by-filter', !show);
       if (show) visibleCount++;
     }});
@@ -741,6 +811,22 @@ function filterListings(which) {{
       heading.classList.toggle('all-hidden', visibleCount === 0);
     }}
   }});
+}}
+
+function filterListings(which) {{
+  filterState.status = which;
+  document.querySelectorAll('.filter-btn').forEach(function (b) {{ b.classList.toggle('active', b.dataset.filter === which); }});
+  applyFilters();
+}}
+
+function filterRegion(region) {{
+  filterState.region = region;
+  applyFilters();
+}}
+
+function filterSearch(q) {{
+  filterState.q = q.trim().toLowerCase();
+  applyFilters();
 }}
 </script>
 </body></html>"""
