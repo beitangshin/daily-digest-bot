@@ -186,6 +186,14 @@ def _parse_price(text: str | None) -> int | None:
 # for the price by a looser digits-only check.
 _PRICE_LINE_RE = re.compile(r"^\d[\d\s]*\s*kr$")
 
+# Banner/metadata lines that can appear above a card's real headline -- none of
+# these are the listing's title, but only the weekday-abbreviated date form used
+# to be excluded (see the title-picking loop below).
+_TITLE_BOILERPLATE_RE = re.compile(
+    r"^(Mån|Tis|Ons|Tor|Fre|Lör|Sön|Idag|Imorgon|Visas|Budgivning|Kontakta|Snart|Spara)\b",
+    re.IGNORECASE,
+)
+
 
 def _parse_float(text: str | None) -> float | None:
     """Parse '3.5' or '3 5' → 3.5."""
@@ -538,11 +546,20 @@ class HemnetScraper:
                     fm = re.search(r"(\d[\d\s]*)\s*kr/mån", line)
                     if fm and monthly_fee is None:
                         monthly_fee = _parse_int(fm.group(1))
-                    # Title: first long-ish non-boilerplate line
-                    if not title and len(line) > 5 and not any(kw in line.lower() for kw in
-                            ["betald", "mäklar", "kr", "rum", "m²", "visning"]):
-                        if not re.match(r"^(Mån|Tis|Ons|Tor|Fre|Lör|Sön)\s+\d", line):
-                            title = line
+                    # Title: first long-ish non-boilerplate line. Cards can carry
+                    # extra banner lines above the real headline -- a viewing-time
+                    # stamp ("Idag kl 14:30", "Imorgon kl 17:15-17:45", "Sön 16 aug
+                    # kl 12:10"), a live-showing note ("Visas nu på söndag"), a
+                    # bidding-status flag ("Budgivning pågår"), or a broker CTA
+                    # ("Kontakta mig vid intresse!"). The old check only excluded
+                    # the weekday-abbreviated date form, so any of these other
+                    # variants got picked up as the title instead of the actual
+                    # headline/address -- confirmed by scraping live cards where
+                    # e.g. "Idag kl 11:30" or "Budgivning pågår" ended up as title.
+                    if (not title and len(line) > 5
+                            and not any(kw in line.lower() for kw in ["betald", "mäklar", "kr", "rum", "m²", "visning"])
+                            and not _TITLE_BOILERPLATE_RE.match(line)):
+                        title = line
 
                 # Sanity: living_area < 10 m² is almost certainly noise
                 if living_area is not None and living_area < 10:
