@@ -25,12 +25,12 @@ _env = Environment(
 )
 
 
-def render_digest_html(digest: Digest) -> str:
+def render_digest_html(digest: Digest, cf_beacon_token: str | None = None) -> str:
     template = _env.get_template("digest.html.jinja")
-    return template.render(digest=digest)
+    return template.render(digest=digest, cf_beacon_token=cf_beacon_token)
 
 
-def write_article_archives(day_dir: Path, digest: Digest) -> None:
+def write_article_archives(day_dir: Path, digest: Digest, cf_beacon_token: str | None = None) -> None:
     """Write one standalone reading page per article that has extracted full
     text, into day_dir/articles/<article.id>.html -- so digest.html/.md can
     link to a local copy instead of the original (possibly paywalled) URL."""
@@ -47,7 +47,7 @@ def write_article_archives(day_dir: Path, digest: Digest) -> None:
                 articles_dir.mkdir(parents=True, exist_ok=True)
                 paragraphs = [p.strip() for p in re.split(r"\n+", article.text) if p.strip()]
                 truncated = len(article.text) >= MAX_CHARS_PER_ARTICLE
-                html = template.render(article=article, paragraphs=paragraphs, truncated=truncated)
+                html = template.render(article=article, paragraphs=paragraphs, truncated=truncated, cf_beacon_token=cf_beacon_token)
                 (articles_dir / f"{article.id}.html").write_text(html, encoding="utf-8")
 
 
@@ -61,7 +61,7 @@ def write_day_meta(day_dir: Path, digest: Digest) -> None:
     (day_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def render_combined_index(output_dir: Path, channels: list[Channel]) -> str:
+def render_combined_index(output_dir: Path, channels: list[Channel], cf_beacon_token: str | None = None) -> str:
     """output/index.html: one tab per channel, each listing that channel's
     daily digests (newest first) read straight from meta.json sidecars --
     no re-running the pipeline needed just to rebuild this page."""
@@ -77,4 +77,4 @@ def render_combined_index(output_dir: Path, channels: list[Channel]) -> str:
                     continue
         channel_data.append({"key": channel.key, "name": channel.name, "days": days})
     template = _env.get_template("index.html.jinja")
-    return template.render(channels=channel_data)
+    return template.render(channels=channel_data, cf_beacon_token=cf_beacon_token)

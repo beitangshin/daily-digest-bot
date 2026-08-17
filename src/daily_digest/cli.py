@@ -97,6 +97,28 @@ def _cmd_sources_check(args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_render_index(args: argparse.Namespace) -> None:
+    settings = load_settings()
+    all_channels = load_channels()
+    if args.channels:
+        wanted = [k.strip() for k in args.channels.split(",") if k.strip()]
+        by_key = {c.key: c for c in all_channels}
+        missing = [k for k in wanted if k not in by_key]
+        if missing:
+            print(f"错误: 未知频道 key: {', '.join(missing)}", file=sys.stderr)
+            raise SystemExit(1)
+        channels = [by_key[k] for k in wanted]
+    else:
+        channels = all_channels
+
+    from .render_html import render_combined_index
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    html = render_combined_index(args.output_dir, channels, cf_beacon_token=settings.cf_web_analytics_token)
+    (args.output_dir / "index.html").write_text(html, encoding="utf-8")
+    print(f"完成: {args.output_dir / 'index.html'}（{len(channels)} 个频道: {', '.join(c.key for c in channels)}）")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="daily-digest", description="每日多频道资讯汇总机器人")
     parser.add_argument("-v", "--verbose", action="store_true", help="输出详细日志")
@@ -147,6 +169,15 @@ def build_parser() -> argparse.ArgumentParser:
     check_parser.add_argument("--sources-file", type=Path, default=None, help="不填则用该频道的默认文件")
     check_parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     check_parser.set_defaults(func=_cmd_sources_check)
+
+    render_index_parser = subparsers.add_parser(
+        "render-index",
+        help="重新生成某个目录下的 index.html（只读 meta.json 拼首页，不重新抓取/摘要），"
+        "--channels 可以限定只显示哪些频道的 tab，用于发布不含全部频道的独立快照",
+    )
+    render_index_parser.add_argument("--output-dir", type=Path, required=True, help="index.html 所在目录，同时是各频道 meta.json 所在的根目录")
+    render_index_parser.add_argument("--channels", help="逗号分隔的频道 key 列表，省略则用 channels.yaml 里的全部频道")
+    render_index_parser.set_defaults(func=_cmd_render_index)
 
     return parser
 

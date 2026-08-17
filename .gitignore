@@ -8,4 +8,15 @@ __pycache__/
 
 # generated output
 output/
+output_deploy/
+output_deploy_news/
 digest.md
+
+# Cloudflare Pages Function build artifacts (compiled from deploy/cloudflare/functions/
+# at deploy time, see run_daily_digest.ps1 -- source is tracked, build output is not)
+deploy/cloudflare/_worker_build/
+deploy/cloudflare/_worker_build_news/
+deploy/cloudflare/_worker.js
+
+# node (wrangler)
+node_modules/

@@ -30,6 +30,7 @@ class Settings:
     max_html_fallback_links: int
     first_run_lookback_hours: float
     max_lookback_hours: float
+    cf_web_analytics_token: str | None = None
 
     @property
     def has_api_key(self) -> bool:
@@ -68,4 +69,5 @@ def load_settings(env_file: Path | None = None) -> Settings:
         max_html_fallback_links=_int("MAX_HTML_FALLBACK_LINKS", 20),
         first_run_lookback_hours=float(os.getenv("FIRST_RUN_LOOKBACK_HOURS", "24")),
         max_lookback_hours=float(os.getenv("MAX_LOOKBACK_HOURS", "72")),
+        cf_web_analytics_token=os.getenv("CF_WEB_ANALYTICS_TOKEN") or None,
     )

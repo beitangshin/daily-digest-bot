@@ -106,7 +106,7 @@ def run_daily(
             article_count=0,
             channel_name=channel.name,
         )
-        _write_outputs(digest, channel, output_dir)
+        _write_outputs(digest, channel, output_dir, settings)
         save_last_run_started_at(channel.key, output_dir, run_started_at)
         return digest
 
@@ -123,7 +123,7 @@ def run_daily(
         logger.info("[%s] %d article(s) judged unrelated/low-value and excluded", channel.key, dropped)
     digest = build_digest(on_topic, channel, date_str, settings, chat_fn=chat_fn)
 
-    _write_outputs(digest, channel, output_dir)
+    _write_outputs(digest, channel, output_dir, settings)
     save_last_run_started_at(channel.key, output_dir, run_started_at)
     return digest
 
@@ -138,17 +138,18 @@ def _print_dry_run_report(channel: Channel, sources: list[Source], articles: lis
         print(f"  - {s.name}{flag}: {counts.get(s.name, 0)} 篇")
 
 
-def _write_outputs(digest: Digest, channel: Channel, output_dir: Path) -> None:
+def _write_outputs(digest: Digest, channel: Channel, output_dir: Path, settings: Settings) -> None:
     channel_dir = output_dir / channel.key
     day_dir = channel_dir / digest.date_str
     day_dir.mkdir(parents=True, exist_ok=True)
+    cf_token = settings.cf_web_analytics_token
 
     # Must run before render_markdown/render_digest_html -- they link each
     # source to its local archive file instead of the original URL.
-    write_article_archives(day_dir, digest)
+    write_article_archives(day_dir, digest, cf_beacon_token=cf_token)
 
     (day_dir / "digest.md").write_text(render_markdown(digest), encoding="utf-8")
-    (day_dir / "digest.html").write_text(render_digest_html(digest), encoding="utf-8")
+    (day_dir / "digest.html").write_text(render_digest_html(digest, cf_beacon_token=cf_token), encoding="utf-8")
     write_day_meta(day_dir, digest)
 
     (channel_dir / "latest.md").write_text(render_markdown(digest, archive_prefix=f"{digest.date_str}/"), encoding="utf-8")
@@ -157,6 +158,6 @@ def _write_outputs(digest: Digest, channel: Channel, output_dir: Path) -> None:
     # just the one that just ran, so it always reflects the full picture.
     all_channels = load_channels()
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "index.html").write_text(render_combined_index(output_dir, all_channels), encoding="utf-8")
+    (output_dir / "index.html").write_text(render_combined_index(output_dir, all_channels, cf_beacon_token=cf_token), encoding="utf-8")
 
     logger.info("[%s] wrote %s", channel.key, day_dir)

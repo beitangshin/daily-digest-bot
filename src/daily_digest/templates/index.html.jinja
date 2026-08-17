@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>每日简报 · 频道首页</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{% if cf_beacon_token %}<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "{{ cf_beacon_token }}"}'></script>{% endif %}
 <style>
   :root {
     color-scheme: light dark;

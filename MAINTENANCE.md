@@ -225,6 +225,71 @@ src/daily_digest/
   所以`render_html.py` 输出的 html 必须保持"自包含、可以直接当静态文件打开"这个约束
   （不能引入需要服务端渲染或者相对于某个特定 web root 的路径假设）。
 
+### 发布到外网：两个独立的 Cloudflare Pages 项目
+
+`run_daily_digest.ps1` 每次全频道跑完后会发布两份**互相独立**的静态快照，各自
+`npx wrangler pages deploy` 到不同的 `--project-name`，所以各自有自己的
+`*.pages.dev` 网址：
+
+- **`daily-digest-bot`**：`output_deploy/`，`robocopy /MIR` 整个 `output/`，三个频道
+  （ai / autonomous_driving / housing）都在，首页 tab 能切换全部频道。
+- **`daily-digest-news`**：`output_deploy_news/`，只 `robocopy` `output/ai` 和
+  `output/autonomous_driving` 两个子目录（housing/ 从不被复制到这个目录树里——这是
+  "该网址不含房源"这个约束在文件层面的实现，不是发布后再做权限过滤），然后用
+  `daily-digest render-index --output-dir output_deploy_news --channels ai,autonomous_driving`
+  单独重新拼一份只有这两个 tab 的 `index.html`（复用 `render_html.render_combined_index`，
+  不重新抓取/摘要，只读两个频道各自的 `meta.json`）。
+
+两个 Cloudflare Pages 项目需要各自存在才能 `wrangler pages deploy` 成功——`daily-digest-bot`
+之前已经手动建过，新增频道网址时如果 `daily-digest-news` 项目还不存在，先手动跑一次
+`npx wrangler pages project create daily-digest-news`（或在 Cloudflare Dashboard 里建），
+之后 `run_daily_digest.ps1` 才能把它跑通。
+
+**加/减一个"独立发布网址"包含的频道**：改 `run_daily_digest.ps1` 里对应 robocopy 行 +
+`render-index --channels` 参数列表即可，不用改 Python 代码——`render-index` 子命令本来就是
+为了让"发布哪些频道的组合"这件事完全在部署脚本层面控制，`Channel` 定义和抓取/摘要逻辑
+不需要知道自己会出现在几份不同的公开快照里。
+
+### 访客记录：Cloudflare Pages Function + D1（后端记录，没有对外网页）
+
+需求是"知道真实访问者从哪来"，Cloudflare Web Analytics 本身不含 IP（刻意的隐私设计），
+所以额外加了一层：`deploy/cloudflare/functions/_middleware.js` 是个 Cloudflare Pages
+Function，每个请求进来先记一条 `{时间, site, IP, 国家, 城市, 路径, referer}` 到
+D1 数据库 `daily-digest-visits`（两个 Pages 项目共用同一个库，靠各自项目环境变量
+`SITE_NAME`=`bot`/`news` 区分），再放行给静态资源。**没有对外的查询/展示页面**——
+访客 IP 是别人的个人数据，不摆公开面板，想看自己用：
+
+```bash
+npx wrangler d1 execute daily-digest-visits --remote --command "select * from visits order by id desc limit 50"
+```
+
+`run_daily_digest.ps1` 每次部署前会在 D1 里删掉 30 天前的记录（GDPR 场景下"没有必要就别
+无限堆积别人的 IP"的最低限度自我保护），部署完再重新插入的清理属于正常运行的一部分，不用
+手动管理。
+
+**一个踩了很久的坑，写在这里防止以后又掉进去**：Cloudflare Pages Function 的标准写法是把
+`functions/` 目录原样扔进部署目录，让 `wrangler pages deploy <dir>` 自动识别打包。这套
+project 用的 wrangler 4.120.0 版本，只要部署命令里带 `--branch` 或 `--commit-dirty`
+参数（`run_daily_digest.ps1` 两个部署都带），就会打印一行不起眼的 debug 日志
+`Pages-to-Workers delegation skipped: pages functions directory` 然后**完全跳过
+Function 打包**——部署本身显示成功，静态页面正常访问，只是 Function 从来没生效过，不报
+任何错误，非常隐蔽（当时是靠 `wrangler pages deployment tail <id>` 报错"cannot tail a
+static site"才发现部署里根本没有 Function）。
+
+解决办法是不依赖这个自动识别：部署前先用
+`wrangler pages functions build <functions目录> --outdir=<临时目录> --build-output-directory=<部署目录>`
+手动编译成一个 `index.js`，复制成 `<部署目录>/_worker.js`（Cloudflare Pages 的
+"Advanced Mode"——根目录下的 `_worker.js` 会接管全部请求路由，编译产物里已经内置了对
+不匹配路由的静态资源兜底，所以现有页面的访问行为不受影响）。`_worker.js` 和编译中间产物
+都不进 git（`deploy/cloudflare/_worker_build*/`、`deploy/cloudflare/_worker.js` 在
+`.gitignore` 里），每次部署前现编译，跟 `output_deploy` 一样是构建产物；真正进 git 的只有
+`deploy/cloudflare/functions/_middleware.js` 这份源码和 `deploy/cloudflare/schema.sql`
+建表语句。
+
+如果以后 wrangler 升级后这个行为变了（比如新版本修好了这个坑），`_middleware.js` 顶部
+注释里也写了同样的说明，改动前先确认这个 delegation-skip 的问题是否还存在，如果不存在了
+理论上可以简化回直接扔 `functions/` 目录这种更标准的写法。
+
 ## 怎么测试
 
 ```bash
