@@ -83,6 +83,9 @@ try {
         # 正常流程里 /MIR 已经会清掉它（output/ 里本来就没有 _worker.js），这里再删一次
         # 是双重保险，不依赖执行顺序假设。
         Remove-Item -Path (Join-Path $deployDir "_worker.js") -Force -ErrorAction SilentlyContinue
+        # robots.txt 同理不能放进 output/（会被 /MIR 当垃圾清掉），源文件在仓库里
+        # （deploy/cloudflare/static/robots.txt），每次部署前复制进去。
+        Copy-Item -Path (Join-Path $root "deploy\cloudflare\static\robots.txt") -Destination (Join-Path $deployDir "robots.txt") -Force
         # 编译产物不进 git，每次部署前现生成，跟 output_deploy 一样是构建产物。输出文件名
         # 不总是 index.js（观察到过 _worker.js），所以按"这个目录下唯一的 .js 文件"取，
         # 不硬编码文件名。
@@ -132,6 +135,7 @@ try {
         # 编译前删掉遗留的 _worker.js / 构建目录，原因同上一个部署块的注释（否则 wrangler
         # 可能直接复用旧编译产物，新路由静默消失）。
         Remove-Item -Path (Join-Path $newsDir "_worker.js") -Force -ErrorAction SilentlyContinue
+        Copy-Item -Path (Join-Path $root "deploy\cloudflare\static\robots.txt") -Destination (Join-Path $newsDir "robots.txt") -Force
         $fnSrcNews = Join-Path $root "deploy\cloudflare\functions"
         $workerBuildDirNews = Join-Path $root "deploy\cloudflare\_worker_build_news"
         Remove-Item -Path $workerBuildDirNews -Recurse -Force -ErrorAction SilentlyContinue

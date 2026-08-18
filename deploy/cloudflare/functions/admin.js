@@ -79,22 +79,36 @@ export async function onRequest(context) {
 
   if (!checkAuth(request, env)) return unauthorized();
 
+  // 下面这批统计（总访问量/独立 IP/地区/热门页面/每日趋势）都只算 blocked=0 的行 --
+  // 也就是真正放行、被当成正常访问的请求，不包含被 _middleware.js 判定成机器人拦下来的
+  // 那些。旧数据（加反爬拦截之前记的）没有机器人判定，blocked 全是默认值 0，会照常算进
+  // "真实流量"里，这个是历史数据的固有局限，不是 bug。
   const db = env.VISITS_DB;
-  const [totals, uniqueIps, byCountry, byDay, topPaths, recent, rangeRow] = await db.batch([
-    db.prepare("SELECT site, count(*) AS n FROM visits GROUP BY site ORDER BY n DESC"),
-    db.prepare("SELECT site, count(DISTINCT ip) AS n FROM visits GROUP BY site ORDER BY n DESC"),
-    db.prepare("SELECT country, count(*) AS n FROM visits GROUP BY country ORDER BY n DESC LIMIT 15"),
-    db.prepare(
-      "SELECT substr(ts, 1, 10) AS day, site, count(*) AS n FROM visits GROUP BY day, site ORDER BY day DESC LIMIT 60"
-    ),
-    db.prepare("SELECT site, path, count(*) AS n FROM visits GROUP BY site, path ORDER BY n DESC LIMIT 20"),
-    db.prepare(
-      "SELECT ts, site, ip, country, city, path, referer FROM visits ORDER BY id DESC LIMIT 100"
-    ),
-    db.prepare("SELECT count(*) AS total, min(ts) AS oldest, max(ts) AS newest FROM visits"),
-  ]);
+  const [totals, uniqueIps, byCountry, byDay, topPaths, recent, rangeRow, blockedTotal, topBlockedUa, topBlockedIp] =
+    await db.batch([
+      db.prepare("SELECT site, count(*) AS n FROM visits WHERE blocked = 0 GROUP BY site ORDER BY n DESC"),
+      db.prepare("SELECT site, count(DISTINCT ip) AS n FROM visits WHERE blocked = 0 GROUP BY site ORDER BY n DESC"),
+      db.prepare("SELECT country, count(*) AS n FROM visits WHERE blocked = 0 GROUP BY country ORDER BY n DESC LIMIT 15"),
+      db.prepare(
+        "SELECT substr(ts, 1, 10) AS day, site, count(*) AS n FROM visits WHERE blocked = 0 GROUP BY day, site ORDER BY day DESC LIMIT 60"
+      ),
+      db.prepare(
+        "SELECT site, path, count(*) AS n FROM visits WHERE blocked = 0 GROUP BY site, path ORDER BY n DESC LIMIT 20"
+      ),
+      db.prepare(
+        "SELECT ts, site, ip, country, city, path, referer, blocked FROM visits ORDER BY id DESC LIMIT 100"
+      ),
+      db.prepare("SELECT count(*) AS total, min(ts) AS oldest, max(ts) AS newest FROM visits"),
+      db.prepare("SELECT count(*) AS n FROM visits WHERE blocked = 1"),
+      db.prepare(
+        "SELECT user_agent, count(*) AS n FROM visits WHERE blocked = 1 GROUP BY user_agent ORDER BY n DESC LIMIT 15"
+      ),
+      db.prepare("SELECT ip, count(*) AS n FROM visits WHERE blocked = 1 GROUP BY ip ORDER BY n DESC LIMIT 15"),
+    ]);
 
   const range = rangeRow.results[0] || { total: 0, oldest: null, newest: null };
+  const blockedCount = blockedTotal.results[0]?.n || 0;
+  const allowedCount = range.total - blockedCount;
 
   const html = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -121,11 +135,32 @@ export async function onRequest(context) {
 </head><body>
 <main>
   <h1>📊 访客统计</h1>
-  <div class="meta">共 ${range.total} 条记录 · ${range.oldest ? esc(range.oldest) : "-"} ~ ${range.newest ? esc(range.newest) : "-"}（保留最近 30 天）</div>
+  <div class="meta">共 ${range.total} 条记录（含被拦截的） · ${range.oldest ? esc(range.oldest) : "-"} ~ ${range.newest ? esc(range.newest) : "-"}（保留最近 30 天）</div>
 
   <div class="grid">
     <section class="card">
-      <h2>总访问量（按站点）</h2>
+      <h2>反爬拦截情况</h2>
+      ${renderTable(
+        ["", "次数"],
+        [
+          ["✅ 放行（真实流量）", allowedCount],
+          ["🚫 拦截（机器人/脚本）", blockedCount],
+        ]
+      )}
+    </section>
+    <section class="card">
+      <h2>被拦截的 User-Agent（Top 15）</h2>
+      <div class="scroll">${renderTable(["User-Agent", "次数"], topBlockedUa.results.map((r) => [r.user_agent || "(空)", r.n]))}</div>
+    </section>
+    <section class="card">
+      <h2>被拦截的 IP（Top 15）</h2>
+      <div class="scroll">${renderTable(["IP", "次数"], topBlockedIp.results.map((r) => [r.ip, r.n]))}</div>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>总访问量（按站点，已排除机器人）</h2>
       ${renderTable(["站点", "访问次数"], totals.results.map((r) => [r.site, r.n]))}
     </section>
     <section class="card">
@@ -151,10 +186,19 @@ export async function onRequest(context) {
 
   <div class="grid">
     <section class="card wide">
-      <h2>最近 100 条原始记录</h2>
+      <h2>最近 100 条原始记录（含被拦截的）</h2>
       <div class="scroll">${renderTable(
-        ["时间", "站点", "IP", "国家", "城市", "路径", "来源"],
-        recent.results.map((r) => [r.ts, r.site, r.ip, r.country, r.city, r.path, r.referer || "-"])
+        ["时间", "站点", "状态", "IP", "国家", "城市", "路径", "来源"],
+        recent.results.map((r) => [
+          r.ts,
+          r.site,
+          r.blocked ? "🚫 拦截" : "✅ 放行",
+          r.ip,
+          r.country,
+          r.city,
+          r.path,
+          r.referer || "-",
+        ])
       )}</div>
     </section>
   </div>

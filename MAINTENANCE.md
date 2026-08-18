@@ -302,8 +302,41 @@ static site"才发现部署里根本没有 Function）。
 不匹配路由的静态资源兜底，所以现有页面的访问行为不受影响）。`_worker.js` 和编译中间产物
 都不进 git（`deploy/cloudflare/_worker_build*/`、`deploy/cloudflare/_worker.js` 在
 `.gitignore` 里），每次部署前现编译，跟 `output_deploy` 一样是构建产物；真正进 git 的只有
-`deploy/cloudflare/functions/_middleware.js` 这份源码和 `deploy/cloudflare/schema.sql`
-建表语句。
+`deploy/cloudflare/functions/` 下的源码和 `deploy/cloudflare/schema.sql` 建表语句。
+
+**调试时的一个陷阱**：如果直接测某次部署的专属哈希域名（`<hash>.daily-digest-bot.pages.dev`，
+`wrangler pages deploy` 输出里给的那个），部署刚完成的头几秒到十几秒可能全站 404、
+`/robots.txt` 还会返回 Cloudflare 自己注入的默认内容（不是仓库里那份）——这是哈希域名本身
+的传播延迟，不是代码问题。**测试认生产别名域名**（`daily-digest-bot.pages.dev`，不带哈希
+前缀），它反映的是"当前线上"，比哈希域名稳定，排查"部署完是不是真的生效了"时应该用这个，
+不要被哈希域名的短暂延迟误导去怀疑代码。
+
+### 反爬拦截
+
+后台数据显示访问量里绝大多数是扫描器/爬虫（反复探测 `/.well-known/agents.json`、
+`/.well-known/mcp` 这类路径的固定几个 IP，明显是互联网背景扫描，不是真人），所以在
+`_middleware.js` 里加了一层基于 User-Agent 的拦截：
+
+- 判定逻辑在 `deploy/cloudflare/functions/_bot.js`（`_middleware.js` 和 `admin.js` 共用）：
+  User-Agent 为空，或者匹配常见工具/脚本/爬虫特征（`curl`、`python-requests`、
+  `Scrapy`、各类 `xxxbot` 等）就判定为机器人。刻意保守，只挡"明显不是浏览器"的请求，
+  不用列表去区分"好爬虫"（比如 Googlebot）和"坏爬虫"——反正 `robots.txt` 已经写了
+  `Disallow: /`，不想要任何爬虫索引，没必要放行搜索引擎。
+- 命中判定的请求直接返回 403，不放行到静态资源；同时把这次尝试也记进 `visits` 表
+  （`blocked=1`，多了 `user_agent` 字段），这样 `/admin` 能看到"拦了多少、拦的是谁"。
+  `/admin`（本来就有 Basic Auth）和 `/robots.txt`（存在的意义就是让爬虫读到"别抓取"，
+  连读取都拦了就本末倒置）这两个路径跳过这套判定，见 `_middleware.js` 里的 `EXEMPT_PATHS`。
+- `/admin` 面板里"反爬拦截情况"那几张卡片（放行 vs 拦截次数、被拦的 User-Agent/IP
+  排行）都是新加的；其余原有的统计（总访问量、地区分布等）现在都改成只算 `blocked=0`
+  的行，避免机器人流量把"真实访客"的数字冲淡。
+- 加过滤条件之前的历史数据没有机器人判定，迁移时 `blocked` 全部补的默认值 0，
+  会照常算进"真实流量"里——这是历史数据的固有局限，不是 bug。
+- `robots.txt` 源文件在 `deploy/cloudflare/static/robots.txt`（`Disallow: /`，明确告诉
+  所有遵守规则的爬虫不要抓取），跟 `_worker.js` 一样是每次部署前从仓库复制进部署目录，
+  不能直接放进 `output/` 里（会被 `/MIR` 当成垃圾清掉）。
+
+想调整拦截松紧：改 `_bot.js` 的 `BOT_UA_RE` 正则或者空 UA 判定；想加白名单路径（比如
+以后要放开搜索引擎收录）就往 `_middleware.js` 的 `EXEMPT_PATHS` 加。
 
 如果以后 wrangler 升级后这个行为变了（比如新版本修好了这个坑），`_middleware.js` 顶部
 注释里也写了同样的说明，改动前先确认这个 delegation-skip 的问题是否还存在，如果不存在了
