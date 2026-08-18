@@ -9,30 +9,33 @@
 // _worker.js 这条路径没有这个问题，编译产物不进 git（deploy/cloudflare/_worker_build/
 // 在 .gitignore 里，跟 output_deploy 一样是每次部署前现生成的构建产物）。
 //
-// 只写库，不对外提供任何查询/展示接口 —— 想看数据自己用
-// `wrangler d1 execute daily-digest-visits --remote --command "..."` 查，不做公开页面。
+// 统计数据自己看的入口是 admin.js（/admin，Basic Auth 保护），这里只管写库。
 export async function onRequest(context) {
   const { request, env, next } = context;
+  const url = new URL(request.url);
 
-  try {
-    const url = new URL(request.url);
-    const cf = request.cf || {};
-    await env.VISITS_DB.prepare(
-      "INSERT INTO visits (ts, site, ip, country, city, path, referer) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    )
-      .bind(
-        new Date().toISOString(),
-        env.SITE_NAME || "unknown",
-        request.headers.get("CF-Connecting-IP"),
-        cf.country || null,
-        cf.city || null,
-        url.pathname,
-        request.headers.get("Referer") || null
+  // /admin 本身是自己在看统计，不算真实访客，不记进 visits 表，免得把自己刷数据的
+  // 行为也算进统计里。
+  if (url.pathname !== "/admin") {
+    try {
+      const cf = request.cf || {};
+      await env.VISITS_DB.prepare(
+        "INSERT INTO visits (ts, site, ip, country, city, path, referer) VALUES (?, ?, ?, ?, ?, ?, ?)"
       )
-      .run();
-  } catch (err) {
-    // 记录失败绝不能影响正常访问，吞掉就行。
-    console.error("visit logging failed", err);
+        .bind(
+          new Date().toISOString(),
+          env.SITE_NAME || "unknown",
+          request.headers.get("CF-Connecting-IP"),
+          cf.country || null,
+          cf.city || null,
+          url.pathname,
+          request.headers.get("Referer") || null
+        )
+        .run();
+    } catch (err) {
+      // 记录失败绝不能影响正常访问，吞掉就行。
+      console.error("visit logging failed", err);
+    }
   }
 
   return next();

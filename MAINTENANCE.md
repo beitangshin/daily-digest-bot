@@ -250,14 +250,18 @@ src/daily_digest/
 为了让"发布哪些频道的组合"这件事完全在部署脚本层面控制，`Channel` 定义和抓取/摘要逻辑
 不需要知道自己会出现在几份不同的公开快照里。
 
-### 访客记录：Cloudflare Pages Function + D1（后端记录，没有对外网页）
+### 访客记录：Cloudflare Pages Function + D1，`/admin` 面板查看
 
 需求是"知道真实访问者从哪来"，Cloudflare Web Analytics 本身不含 IP（刻意的隐私设计），
 所以额外加了一层：`deploy/cloudflare/functions/_middleware.js` 是个 Cloudflare Pages
 Function，每个请求进来先记一条 `{时间, site, IP, 国家, 城市, 路径, referer}` 到
 D1 数据库 `daily-digest-visits`（两个 Pages 项目共用同一个库，靠各自项目环境变量
-`SITE_NAME`=`bot`/`news` 区分），再放行给静态资源。**没有对外的查询/展示页面**——
-访客 IP 是别人的个人数据，不摆公开面板，想看自己用：
+`SITE_NAME`=`bot`/`news` 区分），再放行给静态资源。`/admin` 路径本身不记进这张表
+（自己看统计不算访客）。
+
+查看方式是 `deploy/cloudflare/functions/admin.js`（同样两个项目都挂了），路径
+`/<域名>/admin`，Basic Auth 保护，账号密码是 Cloudflare 的加密 secret
+（`ADMIN_USER`/`ADMIN_PASSWORD`，不在代码/git 里）。也可以跳过网页直接查 D1：
 
 ```bash
 npx wrangler d1 execute daily-digest-visits --remote --command "select * from visits order by id desc limit 50"
@@ -266,6 +270,21 @@ npx wrangler d1 execute daily-digest-visits --remote --command "select * from vi
 `run_daily_digest.ps1` 每次部署前会在 D1 里删掉 30 天前的记录（GDPR 场景下"没有必要就别
 无限堆积别人的 IP"的最低限度自我保护），部署完再重新插入的清理属于正常运行的一部分，不用
 手动管理。
+
+**改 `/admin` 的账号密码**：
+
+```bash
+npx wrangler pages secret put ADMIN_USER --project-name=daily-digest-bot
+npx wrangler pages secret put ADMIN_PASSWORD --project-name=daily-digest-bot
+# daily-digest-news 项目再各设一次，两边独立存储（值可以设成一样的）
+```
+
+在 Windows 上如果是脚本化设置（不是交互式手敲），**不要**用 `"值" | wrangler pages secret put ...`
+这种管道方式——PowerShell 管道 / .NET `StreamWriter` 往子进程 stdin 写字符串时默认带 UTF-8
+BOM，存进去的值会变成 `﻿值`，跟你输入的对不上，而且 `wrangler` 会显示"上传成功"，不会
+报任何错，只有登录时死活验证不过才会发现（`admin.js` 顶部注释里记了这个坑和排查过程）。
+跑得通的办法：把值写成一个不带 BOM 的纯文本文件，再用 `cmd /c "wrangler ... < file"` 做
+操作系统级的 stdin 重定向。
 
 **一个踩了很久的坑，写在这里防止以后又掉进去**：Cloudflare Pages Function 的标准写法是把
 `functions/` 目录原样扔进部署目录，让 `wrangler pages deploy <dir>` 自动识别打包。这套
@@ -289,6 +308,14 @@ static site"才发现部署里根本没有 Function）。
 如果以后 wrangler 升级后这个行为变了（比如新版本修好了这个坑），`_middleware.js` 顶部
 注释里也写了同样的说明，改动前先确认这个 delegation-skip 的问题是否还存在，如果不存在了
 理论上可以简化回直接扔 `functions/` 目录这种更标准的写法。
+
+**第二个连带的坑**：`wrangler pages functions build ... --build-output-directory=<部署目录>`
+如果发现 `<部署目录>` 里已经有一个 `_worker.js`（比如上一轮部署留下的），会直接复用那份
+旧编译产物，不会从 `functions/` 源码重新构建——新加的路由（比如后来加 `admin.js` 时踩到过）
+会静默消失，现象和上面那条一样：部署显示成功，但新功能就是不生效。`run_daily_digest.ps1`
+里编译前会先删掉 `<部署目录>/_worker.js` 和上一次的构建临时目录，双重保险不依赖
+"`/MIR` 已经清过一次"这个假设。手动调试时如果绕过了 `run_daily_digest.ps1` 直接调
+`wrangler pages functions build`，记得自己先删这两个东西，不然会百思不得其解。
 
 ## 怎么测试
 
